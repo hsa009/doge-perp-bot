@@ -1,0 +1,14 @@
+.env
+.vercel
+.next/
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+*.pkl
+dist/
+.DS_Store
+*.egg-info/
+.venv/
+venv/
+.env.vercel
