@@ -279,6 +279,7 @@ def trading_loop():
 
             if doge_pos and float(doge_pos["szi"]) != 0:
                 direction = "long" if float(doge_pos["szi"]) > 0 else "short"
+                cached = redis.get_position()
                 redis.set_position({
                     "coin": doge_pos["coin"],
                     "direction": direction,
@@ -286,6 +287,8 @@ def trading_loop():
                     "entry_price": float(doge_pos["entryPx"]),
                     "unrealized_pnl": float(doge_pos["unrealizedPnl"]),
                     "account_value": hl.get_balance()["account_value"],
+                    "tp_price": cached.get("tp_price") if cached else None,
+                    "sl_price": cached.get("sl_price") if cached else None,
                 })
                 time.sleep(30)
                 continue
