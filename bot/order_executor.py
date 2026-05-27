@@ -15,14 +15,15 @@ class OrderExecutor:
         price = float(self.info.all_mids()["DOGE"])
         return max(int(size_usd / price) + 1, 1)
 
-    def _fmt_px(self, px: float) -> float:
+    def _fmt_px(self, px: float, is_spot: bool = False) -> float:
         meta = self.info.meta()
-        for asset in meta["universe"]:
+        sz_dec = 5
+        for i, asset in enumerate(meta["universe"]):
             if asset["name"] == "DOGE":
-                sz_dec = asset.get("szDecimals", 5)
+                sz_dec = self.info.asset_to_sz_decimals.get(i, asset.get("szDecimals", 5))
                 break
-        decimals = 6 - (sz_dec if isinstance(sz_dec, int) else 5)
-        return float(Decimal(str(px)).quantize(Decimal("1e-{}".format(decimals)), rounding=ROUND_HALF_UP))
+        decimals = (6 if not is_spot else 8) - (sz_dec if isinstance(sz_dec, int) else 5)
+        return round(float(f"{px:.5g}"), max(decimals, 0))
 
     def open_market(self, is_buy: bool, size_usd: float = POSITION_SIZE_USD, slippage: float = 0.005) -> dict:
         sz = self._get_sz(size_usd)
