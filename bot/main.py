@@ -90,7 +90,7 @@ def account():
 
 @app.route("/api/v1/bot/re-ask", methods=["POST"])
 def re_ask():
-    signal = run_ai_signal(allow_wait=True)
+    signal = run_ai_signal(allow_wait=True, from_ai_loop=False)
     if signal:
         return jsonify({"ok": True, "signal": signal})
     return jsonify({"ok": False, "error": "Signal generation failed"}), 500
@@ -98,7 +98,7 @@ def re_ask():
 
 @app.route("/api/v1/bot/force-trade", methods=["POST"])
 def force_trade():
-    signal = run_ai_signal(allow_wait=False)
+    signal = run_ai_signal(allow_wait=False, from_ai_loop=False)
     if signal and signal["direction"] in ("long", "short"):
         opened = open_trade(signal)
         return jsonify({"ok": True, "signal": signal, "trade_opened": opened})
@@ -283,7 +283,7 @@ def trading_loop():
                         logger.exception(f"Close position error: {e}")
                 redis.clear_position()
                 redis.clear_close_position_signal()
-                run_ai_signal(allow_wait=True)
+                run_ai_signal(allow_wait=True, from_ai_loop=False)
                 time.sleep(5)
                 continue
 
@@ -327,7 +327,7 @@ def trading_loop():
                     except Exception as ex:
                         logger.exception(f"close_trade error: {ex}")
                     redis.clear_position()
-                    run_ai_signal(allow_wait=True)
+                    run_ai_signal(allow_wait=True, from_ai_loop=False)
 
             signal = redis.get_current_signal()
             if not signal:
@@ -375,7 +375,7 @@ def trading_loop():
 
 _signal_call_count = 0
 
-def run_ai_signal(allow_wait: bool = True) -> dict | None:
+def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | None:
     global _signal_call_count
     _signal_call_count += 1
     try:
@@ -420,22 +420,46 @@ def run_ai_signal(allow_wait: bool = True) -> dict | None:
             enabled_models = list(signal_engine.MODEL_KEYS)
         cfg = get_runtime_config()
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
+
+        last = redis.get_current_signal()
+        last_dir = last["direction"] if last else None
+        last_reason = last.get("reasoning")[:120] if last else None
+        c_waits = redis.get_consecutive_waits()
+        if last_dir == "wait":
+            c_waits += 1
+            redis.set_consecutive_waits(c_waits)
+        else:
+            c_waits = 0
+            redis.set_consecutive_waits(0)
+        pos = redis.get_position()
+        current_pnl = float(pos.get("unrealized_pnl")) if pos and pos.get("unrealized_pnl") is not None else None
+
         signal = signal_engine.generate_signal(
             ohlcv,
             enabled_models=enabled_models if enabled_models else None,
-            allow_wait=allow_wait,
+            allow_wait=(c_waits < 3),
             tp_usd=cfg["tp_usd"],
             sl_usd=cfg["sl_usd"],
             leverage=cfg["leverage"],
             trade_amount=cfg["trade_amount"],
             groq_api_key=groq_key,
+            last_signal_direction=last_dir,
+            last_signal_reasoning=last_reason,
+            consecutive_waits=c_waits,
+            current_pnl=current_pnl,
         )
 
         signal["_debug_redis_enabled"] = enabled_models
         signal["_debug_call"] = _signal_call_count
         signal["_debug_interval"] = AI_LOOP_INTERVAL
         details = signal.pop("model_details", [])
-        redis.set_current_signal(signal)
+        if from_ai_loop:
+            redis.set_current_signal(signal)
+        else:
+            existing = redis.get_current_signal()
+            if existing and existing.get("timestamp"):
+                signal["timestamp"] = existing["timestamp"]
+            redis.set_current_signal(signal, preserve_timestamp=True)
         redis.set_model_details(details)
         logger.info(f"Signal: {signal['direction']} ({signal['confidence']:.2f}) — {signal.get('reasoning', '')[:120]}")
 
@@ -468,7 +492,7 @@ def ai_loop():
             if pos and pos.get("size", 0) != 0:
                 time.sleep(30)
                 continue
-            run_ai_signal(allow_wait=True)
+            run_ai_signal(allow_wait=True, from_ai_loop=True)
         except Exception as e:
             logger.exception(f"AI loop error: {e}")
         time.sleep(AI_LOOP_INTERVAL)
