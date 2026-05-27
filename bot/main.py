@@ -201,6 +201,12 @@ def get_runtime_config() -> dict:
 def _place_tp_sl(is_buy: bool, notional: float, tp_price: float, sl_price: float) -> dict:
     results = {"tp": None, "sl": None}
     try:
+        open_orders = hl.get_open_orders()
+        for o in open_orders:
+            executor.exchange.cancel(o["coin"], o["oid"])
+    except Exception as e:
+        logger.warning(f"Cancel existing orders: {e}")
+    try:
         results["tp"] = executor.set_take_profit(is_buy, notional, tp_price)
         logger.info(f"TP result: {results['tp']}")
     except Exception as e:
@@ -339,13 +345,17 @@ def trading_loop():
                         tp_price = entry_px * (1 - tp_ratio)
                         sl_price = entry_px * (1 + sl_ratio)
                     _place_tp_sl(is_buy, notional, tp_price, sl_price)
+                try:
+                    account_value = hl.get_balance()["account_value"]
+                except Exception:
+                    account_value = cached.get("account_value", 0) if cached else 0
                 redis.set_position({
                     "coin": doge_pos["coin"],
                     "direction": direction,
                     "size": float(doge_pos["szi"]),
                     "entry_price": entry_px,
                     "unrealized_pnl": float(doge_pos["unrealizedPnl"]),
-                    "account_value": hl.get_balance()["account_value"],
+                    "account_value": account_value,
                     "tp_price": tp_price,
                     "sl_price": sl_price,
                 })
