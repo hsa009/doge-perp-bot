@@ -421,6 +421,7 @@ def run_ai_signal(allow_wait: bool = True) -> dict | None:
             groq_api_key=groq_key,
         )
 
+        signal["_debug_redis_enabled"] = enabled_models
         details = signal.pop("model_details", [])
         redis.set_current_signal(signal)
         redis.set_model_details(details)
