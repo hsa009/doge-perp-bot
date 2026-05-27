@@ -85,7 +85,11 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
 
 def build_prompt(indicators: dict, regime: str = "UNKNOWN", allow_wait: bool = True,
                  tp_usd: float = 3.0, sl_usd: float = 3.0,
-                 leverage: int = 10, trade_amount: float = 10.0) -> str:
+                 leverage: int = 10, trade_amount: float = 10.0,
+                 last_signal_direction: str | None = None,
+                 last_signal_reasoning: str | None = None,
+                 consecutive_waits: int = 0,
+                 current_pnl: float | None = None) -> str:
     i = indicators
     vol_ratio = i["volume"] / i["vol_ma_20"] if i["vol_ma_20"] > 0 else 1.0
     bb_pct = (i["close"] - i["bb_lower"]) / (i["bb_upper"] - i["bb_lower"]) if (i["bb_upper"] - i["bb_lower"]) > 0 else 0.5
@@ -95,6 +99,17 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", allow_wait: bool = T
     notional = trade_amount * leverage
     tp_pct = (tp_usd / notional) * 100
     sl_pct = (sl_usd / notional) * 100
+
+    history_block = ""
+    if last_signal_direction:
+        history_block += f"\nPrevious signal: {last_signal_direction.upper()}"
+        if last_signal_reasoning:
+            history_block += f" — \"{last_signal_reasoning[:80]}\""
+    if current_pnl is not None:
+        history_block += f"\nUnrealized PnL: ${current_pnl:.2f}"
+    if consecutive_waits >= 3:
+        allow_wait = False
+        history_block += "\n⚠️ You have chosen WAIT multiple times. You MUST choose LONG or SHORT now."
 
     wait_rule = "\n- WAIT if trend is unclear or volatility too high" if allow_wait else ""
     direction_enum = '"long"|"short"|"wait"' if allow_wait else '"long"|"short"'
@@ -117,7 +132,7 @@ Trade config:
 - Target profit: ${tp_usd} ({tp_pct:.2f}% move needed)
 - Stop loss: ${sl_usd} ({sl_pct:.2f}% adverse move)
 - Only enter if the market can realistically move {tp_pct:.2f}% in your direction{wait_rule}
-
+{history_block}
 Respond ONLY with valid JSON:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
@@ -179,7 +194,11 @@ def _parse_response(key: str, model: str, name: str, content: str) -> dict | Non
 def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None, allow_wait: bool = True,
                    tp_usd: float = 3.0, sl_usd: float = 3.0,
                    leverage: int = 10, trade_amount: float = 10.0,
-                   groq_api_key: str | None = None) -> dict:
+                   groq_api_key: str | None = None,
+                   last_signal_direction: str | None = None,
+                   last_signal_reasoning: str | None = None,
+                   consecutive_waits: int = 0,
+                   current_pnl: float | None = None) -> dict:
     if ohlcv.empty or len(ohlcv) < 50:
         logger.warning("Not enough data for AI signal")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": []}
@@ -193,7 +212,8 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
 
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
-    prompt = build_prompt(indicators, regime, allow_wait, tp_usd, sl_usd, leverage, trade_amount)
+    prompt = build_prompt(indicators, regime, allow_wait, tp_usd, sl_usd, leverage, trade_amount,
+                          last_signal_direction, last_signal_reasoning, consecutive_waits, current_pnl)
 
     details: list[dict] = []
     with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
@@ -214,6 +234,29 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         logger.warning("All models failed — returning wait")
         return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt}
 
+    directions = set(d["direction"] for d in details)
+    debate_happened = len(directions) > 1 and len(details) >= 2
+
+    if debate_happened:
+        logger.info(f"Split vote {directions} — Round 2 debate")
+        round1_details = list(details)
+        final_details: list[dict] = []
+        with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
+            futures = {}
+            for d in details:
+                debate_prompt = build_debate_prompt(prompt, details, d["key"])
+                futures[executor.submit(call_groq, d["key"], MODELS[d["key"]].split(":")[-1], debate_prompt, 15, groq_api_key)] = d["key"]
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        final_details.append(result)
+                except Exception as e:
+                    logger.warning(f"{key}: debate exception {e}")
+        if final_details:
+            details = final_details
+
     votes = {"long": 0.0, "short": 0.0, "wait": 0.0}
     for d in details:
         votes[d["direction"]] += d["confidence"]
@@ -230,7 +273,7 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
 
     reasons = "; ".join(f"{d['name']}: {d['direction']} ({d['confidence']:.2f})" for d in details)
 
-    logger.info(f"AI vote: winner={winner} conf={avg_conf:.2f} models={len(details)}")
+    logger.info(f"AI vote: winner={winner} conf={avg_conf:.2f} models={len(details)} debate={debate_happened}")
     return {
         "direction": winner,
         "confidence": round(min(avg_conf, 0.95), 2),
@@ -238,7 +281,25 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         "reasoning": reasons,
         "prompt": prompt,
         "model_details": details,
+        "debate_happened": debate_happened,
+        "round1_details": round1_details if debate_happened else [],
     }
+
+
+def build_debate_prompt(original_prompt: str, all_details: list[dict], self_key: str) -> str:
+    self_detail = next(d for d in all_details if d["key"] == self_key)
+    others = [d for d in all_details if d["key"] != self_key]
+    if not others:
+        return original_prompt
+    strongest = max(others, key=lambda d: d["confidence"])
+    return f"""{original_prompt}
+
+=== ROUND 2: DEBATE ===
+Your Round 1: {self_detail['direction'].upper()} ({self_detail['confidence']:.2f})
+Strongest opposing: {strongest['name']} → {strongest['direction'].upper()} ({strongest['confidence']:.2f}) — "{strongest['reasoning']}"
+
+Review their argument. You may change your mind or keep your call.
+JSON: {{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
 def _detect_regime(ohlcv: pd.DataFrame) -> str:
