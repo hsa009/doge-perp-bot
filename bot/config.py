@@ -25,9 +25,11 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_API_KEYS = [k.strip() for k in (os.environ.get("OPENROUTER_API_KEYS") or OPENROUTER_API_KEY).split(",") if k.strip()]
 OPENROUTER_MODELS = os.environ.get(
     "OPENROUTER_MODELS",
-    "openai/gpt-oss-20b:free",
+    "openai/gpt-oss-20b:free,groq:llama-3.3-70b-versatile",
 )
 AI_LOOP_INTERVAL = int(os.environ.get("AI_LOOP_INTERVAL", "300"))
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
