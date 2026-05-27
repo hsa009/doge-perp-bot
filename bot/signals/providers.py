@@ -237,6 +237,7 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": []}
 
     keys_to_run = [k for k in MODEL_KEYS if enabled_models is None or k in enabled_models]
+    logger.info("MODEL_KEYS=%s enabled_models=%s keys_to_run=%s", MODEL_KEYS, enabled_models, keys_to_run)
     if not keys_to_run:
         logger.warning("No models enabled — returning wait")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "All models disabled", "model_details": []}
