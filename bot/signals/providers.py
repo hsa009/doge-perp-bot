@@ -198,7 +198,7 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
     with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
         futures = {}
         for k in keys_to_run:
-            futures[executor.submit(call_groq, k, MODELS[k], prompt, 15, groq_api_key)] = k
+            futures[executor.submit(call_groq, k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)] = k
 
         for future in as_completed(futures):
             key = futures[future]
