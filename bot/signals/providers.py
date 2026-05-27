@@ -1,28 +1,26 @@
 import json
 import time
-import random
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 import pandas as pd
 
-from bot.config import OPENROUTER_API_KEYS, OPENROUTER_MODELS, GROQ_API_KEY
+from bot.config import AI_MODELS, GROQ_API_KEY
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
 
-ALL_MODEL_IDS = [m.strip() for m in OPENROUTER_MODELS.split(",") if m.strip()]
+ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
 
 
 def _build_model_keys() -> dict[str, str]:
     seen: dict[str, int] = {}
     keys: dict[str, str] = {}
     for m in ALL_MODEL_IDS:
-        short = m.split("/")[-1].split(":")[0].replace("-", "").replace(".", "")
+        short = m.split(":")[-1].replace("-", "").replace(".", "").replace("_", "")
         idx = seen.get(short, 0)
         seen[short] = idx + 1
         key = f"{short}#{idx}"
@@ -37,20 +35,9 @@ MODEL_KEYS: list[str] = list(MODELS.keys())
 def get_model_defs() -> list[dict]:
     defs = []
     for key, model_id in MODELS.items():
-        name = key.rsplit("#", 1)[0]
+        name = model_id.split(":")[-1]
         defs.append({"key": key, "model_id": model_id, "name": name})
     return defs
-
-
-def _provider_for(model_id: str) -> str:
-    if model_id.startswith("groq:"):
-        return "groq"
-    return "openrouter"
-
-
-def _strip_provider(model_id: str) -> str:
-    prefix = f"groq:"
-    return model_id[len(prefix):] if model_id.startswith(prefix) else model_id
 
 
 def compute_indicators(ohlcv: pd.DataFrame) -> dict:
@@ -135,45 +122,6 @@ Respond ONLY with valid JSON:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
-def call_openrouter(key: str, model: str, prompt: str, timeout: int = 15, api_keys: list[str] | None = None) -> dict | None:
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_tokens": 300,
-    }
-    keys = api_keys or OPENROUTER_API_KEYS
-    for attempt, api_key in enumerate(keys):
-        if attempt > 0:
-            time.sleep(random.uniform(3, 6))
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://doge-perp-bot.vercel.app",
-            "X-Title": "DOGE Perp Bot",
-        }
-        try:
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(OPENROUTER_BASE, json=payload, headers=headers)
-                if resp.status_code == 429:
-                    retry_after = int(resp.headers.get("Retry-After", 5))
-                    logger.warning(f"{key} (key#{attempt}): 429 — retry-after={retry_after}s, trying next key")
-                    time.sleep(min(retry_after, 10))
-                    continue
-                if resp.status_code != 200:
-                    logger.warning(f"{key}: HTTP {resp.status_code} {resp.text[:200]}")
-                    return None
-                body = resp.json()
-                content = body["choices"][0]["message"]["content"]
-                name = key.rsplit("#", 1)[0]
-                return _parse_response(key, model, name, content)
-        except Exception as e:
-            logger.debug(f"{key} (key#{attempt}): {e}")
-            continue
-    logger.warning(f"{key}: all {len(keys)} api keys exhausted")
-    return None
-
-
 def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key: str | None = None) -> dict | None:
     if not groq_api_key:
         groq_api_key = GROQ_API_KEY
@@ -228,7 +176,7 @@ def _parse_response(key: str, model: str, name: str, content: str) -> dict | Non
         return None
 
 
-def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None, api_keys: list[str] | None = None, allow_wait: bool = True,
+def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None, allow_wait: bool = True,
                    tp_usd: float = 3.0, sl_usd: float = 3.0,
                    leverage: int = 10, trade_amount: float = 10.0,
                    groq_api_key: str | None = None) -> dict:
@@ -250,13 +198,7 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
     with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
         futures = {}
         for k in keys_to_run:
-            model_id = MODELS[k]
-            provider = _provider_for(model_id)
-            actual_model = _strip_provider(model_id)
-            if provider == "groq":
-                futures[executor.submit(call_groq, k, actual_model, prompt, 15, groq_api_key)] = k
-            else:
-                futures[executor.submit(call_openrouter, k, actual_model, prompt, 15, api_keys)] = k
+            futures[executor.submit(call_groq, k, MODELS[k], prompt, 15, groq_api_key)] = k
 
         for future in as_completed(futures):
             key = futures[future]
