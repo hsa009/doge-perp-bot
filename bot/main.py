@@ -361,7 +361,10 @@ def trading_loop():
                 })
                 time.sleep(30)
                 continue
-            else:
+            elif doge_pos is None:
+                time.sleep(5)
+                continue
+            elif float(doge_pos["szi"]) == 0:
                 cached = redis.get_position()
                 if cached and cached.get("size", 0) != 0:
                     logger.info("Position closed by TP/SL trigger")
