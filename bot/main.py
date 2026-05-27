@@ -126,7 +126,7 @@ def set_tp_sl():
         else:
             tp_price = entry_px * (1 - tp_ratio)
             sl_price = entry_px * (1 + sl_ratio)
-        _place_tp_sl(is_buy, notional, tp_price, sl_price)
+        results = _place_tp_sl(is_buy, notional, tp_price, sl_price)
         redis.set_position({
             "coin": "DOGE",
             "direction": "long" if is_buy else "short",
@@ -136,7 +136,7 @@ def set_tp_sl():
             "tp_price": tp_price,
             "sl_price": sl_price,
         })
-        return jsonify({"ok": True, "tp_price": tp_price, "sl_price": sl_price})
+        return jsonify({"ok": True, "tp_price": tp_price, "sl_price": sl_price, "results": results})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -198,17 +198,19 @@ def get_runtime_config() -> dict:
     }
 
 
-def _place_tp_sl(is_buy: bool, notional: float, tp_price: float, sl_price: float):
+def _place_tp_sl(is_buy: bool, notional: float, tp_price: float, sl_price: float) -> dict:
+    results = {"tp": None, "sl": None}
     try:
-        tp_result = executor.set_take_profit(is_buy, notional, tp_price)
-        logger.info(f"TP result: {tp_result}")
+        results["tp"] = executor.set_take_profit(is_buy, notional, tp_price)
+        logger.info(f"TP result: {results['tp']}")
     except Exception as e:
         logger.error(f"TP placement failed: {e}")
     try:
-        sl_result = executor.set_stop_loss(is_buy, notional, sl_price)
-        logger.info(f"SL result: {sl_result}")
+        results["sl"] = executor.set_stop_loss(is_buy, notional, sl_price)
+        logger.info(f"SL result: {results['sl']}")
     except Exception as e:
         logger.error(f"SL placement failed: {e}")
+    return results
 
 
 def open_trade(signal: dict) -> bool:
