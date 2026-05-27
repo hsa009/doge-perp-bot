@@ -373,7 +373,11 @@ def trading_loop():
     logger.info("Trading loop terminated")
 
 
+_signal_call_count = 0
+
 def run_ai_signal(allow_wait: bool = True) -> dict | None:
+    global _signal_call_count
+    _signal_call_count += 1
     try:
         result = hl.info.meta_and_asset_ctxs()
         meta, ctxs = result[0], result[1]
@@ -428,6 +432,8 @@ def run_ai_signal(allow_wait: bool = True) -> dict | None:
         )
 
         signal["_debug_redis_enabled"] = enabled_models
+        signal["_debug_call"] = _signal_call_count
+        signal["_debug_interval"] = AI_LOOP_INTERVAL
         details = signal.pop("model_details", [])
         redis.set_current_signal(signal)
         redis.set_model_details(details)
