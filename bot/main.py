@@ -67,6 +67,18 @@ def bot_status():
     })
 
 
+@app.route("/api/v1/bot/debug")
+def bot_debug():
+    from bot.signals.providers import MODEL_KEYS
+    enabled = redis.get_enabled_models()
+    defs = redis.get_model_defs()
+    return jsonify({
+        "MODEL_KEYS": MODEL_KEYS,
+        "enabled_models": enabled,
+        "model_defs": defs,
+    })
+
+
 @app.route("/api/v1/account")
 def account():
     try:
