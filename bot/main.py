@@ -396,6 +396,7 @@ def run_ai_signal(allow_wait: bool = True) -> dict | None:
         ohlcv = pd.DataFrame(rows).sort_values("timestamp").tail(100)
 
         enabled_models = redis.get_enabled_models()
+        logger.info("run_ai_signal: enabled_models from Redis=%s", enabled_models)
         keys_str = redis.get_config("openrouter_keys", ",".join(OPENROUTER_API_KEYS))
         api_keys = [k.strip() for k in keys_str.split(",") if k.strip()]
         cfg = get_runtime_config()
