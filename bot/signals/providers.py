@@ -188,7 +188,8 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
     logger.info("MODEL_KEYS=%s enabled_models=%s keys_to_run=%s", MODEL_KEYS, enabled_models, keys_to_run)
     if not keys_to_run:
         logger.warning("No models enabled — returning wait")
-        return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "All models disabled", "model_details": []}
+        return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "All models disabled", "model_details": [],
+                "_debug_enabled_models": enabled_models, "_debug_model_keys": MODEL_KEYS}
 
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
