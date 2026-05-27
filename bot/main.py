@@ -404,7 +404,7 @@ def trading_loop():
                 continue
 
             signal_age = time.time() - signal.get("timestamp", 0)
-            if signal_age > AI_LOOP_INTERVAL - 600:
+            if signal_age > AI_LOOP_INTERVAL:
                 time.sleep(5)
                 continue
 
