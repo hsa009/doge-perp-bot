@@ -504,11 +504,17 @@ def init_bot():
     except Exception as e:
         logger.info(f"Supabase config load skipped: {e}")
     try:
-        if not redis.get_model_defs():
-            defs = get_model_defs()
-            redis.set_model_defs(defs)
-            redis.set_enabled_models([d["key"] for d in defs])
-            logger.info(f"Seeded {len(defs)} model defs in Redis")
+        defs = get_model_defs()
+        existing_defs = redis.get_model_defs()
+        existing_keys = {d["key"] for d in existing_defs} if existing_defs else set()
+        new_keys = {d["key"] for d in defs}
+        redis.set_model_defs(defs)
+        if existing_defs is None or existing_keys != new_keys:
+            enabled = [d["key"] for d in defs]
+            redis.set_enabled_models(enabled)
+            logger.info(f"Seeded {len(defs)} model defs in Redis (enabled: {enabled})")
+        else:
+            logger.info(f"Model defs unchanged ({len(defs)} models)")
     except Exception as e:
         logger.warning(f"Failed to seed model defs: {e}")
     try:
