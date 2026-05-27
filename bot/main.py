@@ -16,13 +16,14 @@ from bot.config import (
     MAX_DAILY_LOSS_USD,
     AI_LOOP_INTERVAL,
     OPENROUTER_API_KEYS,
+    GROQ_API_KEY,
 )
 from bot.hyperliquid_client import HyperliquidClient
 from bot.order_executor import OrderExecutor
 from bot.db import Database
 from bot.redis_client import RedisClient
-from bot.signals import openrouter_ai as signal_engine
-from bot.signals.openrouter_ai import get_model_defs
+from bot.signals import providers as signal_engine
+from bot.signals.providers import get_model_defs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -398,6 +399,7 @@ def run_ai_signal(allow_wait: bool = True) -> dict | None:
         keys_str = redis.get_config("openrouter_keys", ",".join(OPENROUTER_API_KEYS))
         api_keys = [k.strip() for k in keys_str.split(",") if k.strip()]
         cfg = get_runtime_config()
+        groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
         signal = signal_engine.generate_signal(
             ohlcv,
             enabled_models=enabled_models if enabled_models else None,
@@ -407,6 +409,7 @@ def run_ai_signal(allow_wait: bool = True) -> dict | None:
             sl_usd=cfg["sl_usd"],
             leverage=cfg["leverage"],
             trade_amount=cfg["trade_amount"],
+            groq_api_key=groq_key,
         )
 
         details = signal.pop("model_details", [])
@@ -459,6 +462,7 @@ def seed_redis_config():
         "max_daily_loss": str(MAX_DAILY_LOSS_USD),
         "max_daily_loss_enabled": "1",
         "openrouter_keys": ",".join(OPENROUTER_API_KEYS),
+        "groq_api_key": GROQ_API_KEY,
     }
     for key, val in defaults.items():
         existing = redis.get_config(key, "")
