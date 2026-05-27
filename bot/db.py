@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from supabase import create_client
 from bot.config import SUPABASE_URL, SUPABASE_KEY
 
@@ -21,6 +22,8 @@ class Database:
     def close_trade(self, trade_id: str, exit_data: dict):
         if not self.enabled:
             return
+        exit_data["status"] = "closed"
+        exit_data["closed_at"] = datetime.now(timezone.utc).isoformat()
         return (
             self.client.table("trades")
             .update(exit_data)
@@ -56,7 +59,6 @@ class Database:
     def get_todays_pnl(self) -> float:
         if not self.enabled:
             return 0.0
-        from datetime import datetime, timedelta, timezone
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         result = (
             self.client.table("trades")
