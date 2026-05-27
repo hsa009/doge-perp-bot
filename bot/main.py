@@ -107,6 +107,40 @@ def force_trade():
     return jsonify({"ok": False, "error": "Signal generation failed"}), 500
 
 
+@app.route("/api/v1/bot/set-tp-sl", methods=["POST"])
+def set_tp_sl():
+    try:
+        doge_pos = hl.get_doge_position()
+        if not doge_pos or float(doge_pos["szi"]) == 0:
+            return jsonify({"ok": False, "error": "No open position"}), 400
+        is_buy = float(doge_pos["szi"]) > 0
+        entry_px = float(doge_pos["entryPx"])
+        sz = abs(float(doge_pos["szi"]))
+        notional = sz * entry_px
+        cfg = get_runtime_config()
+        tp_ratio = cfg["tp_usd"] / notional
+        sl_ratio = cfg["sl_usd"] / notional
+        if is_buy:
+            tp_price = entry_px * (1 + tp_ratio)
+            sl_price = entry_px * (1 - sl_ratio)
+        else:
+            tp_price = entry_px * (1 - tp_ratio)
+            sl_price = entry_px * (1 + sl_ratio)
+        _place_tp_sl(is_buy, notional, tp_price, sl_price)
+        redis.set_position({
+            "coin": "DOGE",
+            "direction": "long" if is_buy else "short",
+            "size": float(doge_pos["szi"]),
+            "entry_price": entry_px,
+            "unrealized_pnl": float(doge_pos.get("unrealizedPnl", 0)),
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+        })
+        return jsonify({"ok": True, "tp_price": tp_price, "sl_price": sl_price})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/v1/bot/close-position", methods=["POST"])
 def close_position():
     logger.info("Close position requested via API")
@@ -164,6 +198,19 @@ def get_runtime_config() -> dict:
     }
 
 
+def _place_tp_sl(is_buy: bool, notional: float, tp_price: float, sl_price: float):
+    try:
+        tp_result = executor.set_take_profit(is_buy, notional, tp_price)
+        logger.info(f"TP result: {tp_result}")
+    except Exception as e:
+        logger.error(f"TP placement failed: {e}")
+    try:
+        sl_result = executor.set_stop_loss(is_buy, notional, sl_price)
+        logger.info(f"SL result: {sl_result}")
+    except Exception as e:
+        logger.error(f"SL placement failed: {e}")
+
+
 def open_trade(signal: dict) -> bool:
     cfg = get_runtime_config()
     is_buy = signal["direction"] == "long"
@@ -197,27 +244,7 @@ def open_trade(signal: dict) -> bool:
         tp_price = entry_price * (1 - tp_ratio)
         sl_price = entry_price * (1 + sl_ratio)
 
-    tp_result = executor.set_take_profit(is_buy, notional, tp_price)
-    tp_statuses = tp_result.get("response", {}).get("data", {}).get("statuses", [])
-    if tp_statuses and "error" in str(tp_statuses[0]):
-        logger.error(f"TP order failed: {tp_statuses[0]}")
-        try:
-            db.log("ERROR", f"TP order failed: {tp_statuses[0]}")
-        except Exception:
-            pass
-    else:
-        logger.info(f"TP order placed: {tp_result}")
-
-    sl_result = executor.set_stop_loss(is_buy, notional, sl_price)
-    sl_statuses = sl_result.get("response", {}).get("data", {}).get("statuses", [])
-    if sl_statuses and "error" in str(sl_statuses[0]):
-        logger.error(f"SL order failed: {sl_statuses[0]}")
-        try:
-            db.log("ERROR", f"SL order failed: {sl_statuses[0]}")
-        except Exception:
-            pass
-    else:
-        logger.info(f"SL order placed: {sl_result}")
+    _place_tp_sl(is_buy, notional, tp_price, sl_price)
 
     try:
         db.save_trade({
@@ -292,15 +319,33 @@ def trading_loop():
             if doge_pos and float(doge_pos["szi"]) != 0:
                 direction = "long" if float(doge_pos["szi"]) > 0 else "short"
                 cached = redis.get_position()
+                entry_px = float(doge_pos["entryPx"])
+                sz = abs(float(doge_pos["szi"]))
+                notional = sz * entry_px
+                tp_price = cached.get("tp_price") if cached else None
+                sl_price = cached.get("sl_price") if cached else None
+                if tp_price is None or sl_price is None:
+                    logger.info("TP/SL missing — placing now")
+                    is_buy = float(doge_pos["szi"]) > 0
+                    cfg = get_runtime_config()
+                    tp_ratio = cfg["tp_usd"] / notional
+                    sl_ratio = cfg["sl_usd"] / notional
+                    if is_buy:
+                        tp_price = entry_px * (1 + tp_ratio)
+                        sl_price = entry_px * (1 - sl_ratio)
+                    else:
+                        tp_price = entry_px * (1 - tp_ratio)
+                        sl_price = entry_px * (1 + sl_ratio)
+                    _place_tp_sl(is_buy, notional, tp_price, sl_price)
                 redis.set_position({
                     "coin": doge_pos["coin"],
                     "direction": direction,
                     "size": float(doge_pos["szi"]),
-                    "entry_price": float(doge_pos["entryPx"]),
+                    "entry_price": entry_px,
                     "unrealized_pnl": float(doge_pos["unrealizedPnl"]),
                     "account_value": hl.get_balance()["account_value"],
-                    "tp_price": cached.get("tp_price") if cached else None,
-                    "sl_price": cached.get("sl_price") if cached else None,
+                    "tp_price": tp_price,
+                    "sl_price": sl_price,
                 })
                 time.sleep(30)
                 continue
