@@ -41,8 +41,9 @@ class RedisClient:
         result = self._request("GET", "bot:running")
         return result == "1"
 
-    def set_current_signal(self, signal: dict):
-        signal["timestamp"] = time.time()
+    def set_current_signal(self, signal: dict, *, preserve_timestamp: bool = False):
+        if not preserve_timestamp:
+            signal["timestamp"] = time.time()
         self._request("SET", "signal:current", json.dumps(signal))
         self._request("EXPIRE", "signal:current", 7200)
 
@@ -115,6 +116,13 @@ class RedisClient:
         if result:
             return json.loads(result)
         return []
+
+    def set_consecutive_waits(self, n: int):
+        self._request("SET", "signal:consecutive_waits", str(n))
+
+    def get_consecutive_waits(self) -> int:
+        result = self._request("GET", "signal:consecutive_waits")
+        return int(result) if result else 0
 
     def get_all_config(self) -> dict:
         keys = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled"]
