@@ -408,6 +408,12 @@ def run_ai_signal(allow_wait: bool = True) -> dict | None:
 
         enabled_models = redis.get_enabled_models()
         logger.info("run_ai_signal: enabled_models from Redis=%s", enabled_models)
+        if not enabled_models or set(enabled_models) != set(signal_engine.MODEL_KEYS):
+            logger.warning("Model mismatch detected — reseeding: redis=%s models=%s", enabled_models, signal_engine.MODEL_KEYS)
+            defs = signal_engine.get_model_defs()
+            redis.set_model_defs(defs)
+            redis.set_enabled_models(list(signal_engine.MODEL_KEYS))
+            enabled_models = list(signal_engine.MODEL_KEYS)
         cfg = get_runtime_config()
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
         signal = signal_engine.generate_signal(
