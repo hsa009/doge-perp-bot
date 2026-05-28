@@ -291,6 +291,29 @@ def open_trade(signal: dict) -> bool:
     return True
 
 
+def close_position_in_db():
+    try:
+        open_trades = db.get_open_trades()
+        if open_trades:
+            t = open_trades[0]
+            exit_price = hl.get_current_price()
+            entry_px = float(t.get("entry_price", 0))
+            notional = float(t.get("notional", 0))
+            direction = t.get("direction", "long")
+            mult = 1 if direction == "long" else -1
+            pnl = (exit_price - entry_px) / entry_px * notional * mult
+            db.close_trade(t["id"], {
+                "exit_price": exit_price,
+                "exit_reason": "tp_sl",
+                "net_pnl_usd": pnl,
+            })
+        db.log("INFO", "Trade closed by trigger order")
+    except Exception as ex:
+        logger.exception(f"close_position_in_db error: {ex}")
+    redis.clear_position()
+    run_ai_signal(allow_wait=True, from_ai_loop=True)
+
+
 def trading_loop():
     logger.info("Trading loop started")
     while True:
@@ -318,7 +341,7 @@ def trading_loop():
                         logger.exception(f"Close position error: {e}")
                 redis.clear_position()
                 redis.clear_close_position_signal()
-                run_ai_signal(allow_wait=True, from_ai_loop=False)
+                run_ai_signal(allow_wait=True, from_ai_loop=True)
                 time.sleep(5)
                 continue
 
@@ -362,32 +385,19 @@ def trading_loop():
                 time.sleep(30)
                 continue
             elif doge_pos is None:
-                time.sleep(5)
-                continue
+                cached = redis.get_position()
+                if cached and abs(cached.get("size", 0)) > 0:
+                    logger.info("Position gone from exchange — closing trade in DB")
+                    close_position_in_db()
+                    time.sleep(5)
+                else:
+                    time.sleep(5)
+                    continue
             elif float(doge_pos["szi"]) == 0:
                 cached = redis.get_position()
                 if cached and cached.get("size", 0) != 0:
-                    logger.info("Position closed by TP/SL trigger")
-                    try:
-                        open_trades = db.get_open_trades()
-                        if open_trades:
-                            t = open_trades[0]
-                            exit_price = hl.get_current_price()
-                            entry_px = float(t.get("entry_price", 0))
-                            notional = float(t.get("notional", 0))
-                            direction = t.get("direction", "long")
-                            mult = 1 if direction == "long" else -1
-                            pnl = (exit_price - entry_px) / entry_px * notional * mult
-                            db.close_trade(t["id"], {
-                                "exit_price": exit_price,
-                                "exit_reason": "tp_sl",
-                                "net_pnl_usd": pnl,
-                            })
-                        db.log("INFO", "Trade closed by trigger order")
-                    except Exception as ex:
-                        logger.exception(f"close_trade error: {ex}")
-                    redis.clear_position()
-                    run_ai_signal(allow_wait=True, from_ai_loop=False)
+                    logger.info("Position closed (sz=0)")
+                    close_position_in_db()
 
             signal = redis.get_current_signal()
             if not signal:
