@@ -295,6 +295,10 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         logger.warning("Not enough data for AI signal")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": []}
 
+    if enabled_models is not None and not enabled_models:
+        logger.warning("enabled_models is empty list — falling back to MODEL_KEYS")
+        enabled_models = None
+
     keys_to_run = [k for k in MODEL_KEYS if enabled_models is None or k in enabled_models]
     logger.info("MODEL_KEYS=%s enabled_models=%s keys_to_run=%s", MODEL_KEYS, enabled_models, keys_to_run)
     if not keys_to_run:
