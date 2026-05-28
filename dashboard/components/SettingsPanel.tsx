@@ -66,7 +66,7 @@ export default function SettingsPanel({ config, onSaved }: Props) {
         </div>
         <div>
           <label className="block text-xs text-zinc-500">Trade Amount ($)</label>
-          <input type="number" step="0.5" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputClass} />
+          <input type="number" min="1" step="0.5" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputClass} />
         </div>
         <div>
           <label className="block text-xs text-zinc-500">Leverage (x)</label>

@@ -26,6 +26,14 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json()
+
+  if (body.trade_amount !== undefined) {
+    const val = parseFloat(body.trade_amount)
+    if (isNaN(val) || val < 1) {
+      return NextResponse.json({ ok: false, error: "trade_amount must be >= 1" }, { status: 400 })
+    }
+  }
+
   const ops: Promise<void>[] = []
 
   for (const key of ALLOWED) {

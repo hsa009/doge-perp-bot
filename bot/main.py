@@ -63,10 +63,15 @@ def bot_status():
     running = redis.is_bot_running()
     signal = redis.get_current_signal()
     position = redis.get_position()
+    cfg = get_runtime_config()
+    cfg["ai_loop_interval"] = str(AI_LOOP_INTERVAL)
+    cfg["groq_api_key"] = redis.get_config("groq_api_key", GROQ_API_KEY)
     return jsonify({
         "running": running,
         "last_signal": signal,
         "position": position,
+        "mark_price": hl.get_current_price(),
+        "config": cfg,
     })
 
 
@@ -231,6 +236,10 @@ def open_trade(signal: dict) -> bool:
     size_usd = cfg["trade_amount"]
     lev = cfg["leverage"]
     notional = size_usd * lev
+
+    if notional < 1.0:
+        logger.warning(f"Notional ${notional:.2f} below $1 minimum, refusing trade")
+        return False
 
     logger.info(f"Opening {signal['direction']} trade — confidence: {signal['confidence']:.2f} @ ${entry_price:.5f} (margin=${size_usd}, leverage={lev}x, notional=${notional:.2f})")
 
