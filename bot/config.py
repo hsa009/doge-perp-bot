@@ -28,6 +28,7 @@ AI_MODELS = os.environ.get(
 AI_LOOP_INTERVAL = int(os.environ.get("AI_LOOP_INTERVAL", "600"))
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 

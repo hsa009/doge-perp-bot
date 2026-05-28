@@ -6,12 +6,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import pandas as pd
 
-from bot.config import AI_MODELS, GROQ_API_KEY
+from bot.config import AI_MODELS, GROQ_API_KEY, GEMINI_API_KEY
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
 
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
 
@@ -89,7 +90,8 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", allow_wait: bool = T
                  last_signal_direction: str | None = None,
                  last_signal_reasoning: str | None = None,
                  consecutive_waits: int = 0,
-                 current_pnl: float | None = None) -> str:
+                 current_pnl: float | None = None,
+                 market_context: dict | None = None) -> str:
     i = indicators
     vol_ratio = i["volume"] / i["vol_ma_20"] if i["vol_ma_20"] > 0 else 1.0
     bb_pct = (i["close"] - i["bb_lower"]) / (i["bb_upper"] - i["bb_lower"]) if (i["bb_upper"] - i["bb_lower"]) > 0 else 0.5
@@ -109,7 +111,35 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", allow_wait: bool = T
         history_block += f"\nUnrealized PnL: ${current_pnl:.2f}"
     if consecutive_waits >= 3:
         allow_wait = False
-        history_block += "\n⚠️ You have chosen WAIT multiple times. You MUST choose LONG or SHORT now."
+        history_block += "\nYou have chosen WAIT multiple times. You MUST choose LONG or SHORT now."
+
+    market_block = ""
+    if market_context:
+        ob = market_context.get("order_book", {})
+        bids = ob.get("bids", [])
+        asks = ob.get("asks", [])
+        bid_vol = ob.get("bid_volume", 0)
+        ask_vol = ob.get("ask_volume", 0)
+        spread_pct = ob.get("spread_pct", 0)
+        funding_rate = market_context.get("funding_rate", 0)
+        funding_ann = market_context.get("funding_annualized_pct", 0)
+        funding_sig = market_context.get("funding_signal", "neutral")
+        oi = market_context.get("open_interest", 0)
+
+        closes_str = ", ".join(f"${c:.5f}" for c in market_context.get("recent_closes", []))
+
+        bid_px_str = f"${bids[0][0]:.5f}" if bids else "?"
+        ask_px_str = f"${asks[0][0]:.5f}" if asks else "?"
+        ratio_str = f"{bid_vol / ask_vol:.2f}x" if ask_vol > 0 else "N/A"
+
+        market_block = f"""
+Market Context:
+  Order Book: Bids {int(bid_vol)} @ {bid_px_str} vs Asks {int(ask_vol)} @ {ask_px_str}
+  Bid/Ask Ratio: {ratio_str}
+  Spread: {spread_pct:.4f}%
+  Funding Rate: {funding_rate:.6f}% hourly ({funding_ann:.2f}% APR) — {funding_sig}
+  Open Interest: ${oi:,.0f}
+  Recent Close Trend (last 15): {closes_str}"""
 
     wait_rule = "\n- WAIT if trend is unclear or volatility too high" if allow_wait else ""
     direction_enum = '"long"|"short"|"wait"' if allow_wait else '"long"|"short"'
@@ -126,13 +156,17 @@ ATR(14): ${i['atr']:.5f}
 Bollinger %B: {bb_pct:.2f}
 Volume ratio (vs 20-avg): {vol_ratio:.2f}x
 Market regime: {regime}
-
+{market_block}
 Trade config:
 - Position: ${trade_amount} margin @ {leverage}x = ${notional:.0f} notional
 - Target profit: ${tp_usd} ({tp_pct:.2f}% move needed)
 - Stop loss: ${sl_usd} ({sl_pct:.2f}% adverse move)
 - Only enter if the market can realistically move {tp_pct:.2f}% in your direction{wait_rule}
 {history_block}
+Direction signals:
+- LONG if order book is bid-heavy, funding is negative (shorts paying), and price is trending up
+- SHORT if order book is ask-heavy, funding is positive (longs paying), and price is trending down
+- HOLD if signals are mixed or unclear
 Respond ONLY with valid JSON:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
@@ -171,6 +205,46 @@ def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key
         return None
 
 
+def call_gemini(key: str, model: str, prompt: str, timeout: int = 30, gemini_api_key: str | None = None) -> dict | None:
+    if not gemini_api_key:
+        gemini_api_key = GEMINI_API_KEY
+    if not gemini_api_key:
+        logger.warning(f"{key}: no Gemini API key configured")
+        return None
+
+    url = f"{GEMINI_BASE}/{model}:generateContent?key={gemini_api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 8192,
+        },
+    }
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.warning(f"{key}: HTTP {resp.status_code} {resp.text[:300]}")
+                return None
+            body = resp.json()
+            candidates = body.get("candidates", [])
+            if not candidates:
+                logger.warning(f"{key}: no candidates in response")
+                return None
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                logger.warning(f"{key}: no parts in response")
+                return None
+            content = parts[0].get("text", "")
+            if not content:
+                logger.warning(f"{key}: empty text in response")
+                return None
+            return _parse_response(key, model, model, content)
+    except Exception as e:
+        logger.debug(f"{key}: {e}")
+        return None
+
+
 def _parse_response(key: str, model: str, name: str, content: str) -> dict | None:
     try:
         parsed = json.loads(content)
@@ -190,6 +264,23 @@ def _parse_response(key: str, model: str, name: str, content: str) -> dict | Non
         return None
 
 
+def build_tiebreaker_prompt(original_prompt: str, all_details: list[dict]) -> str:
+    models_block = ""
+    for d in all_details:
+        models_block += f"\n{d['name']}: {d['direction'].upper()} ({d['confidence']:.2f})"
+        if d.get("reasoning"):
+            models_block += f"\n  Reasoning: \"{d['reasoning']}\""
+
+    return f"""{original_prompt}
+
+=== TIEBREAKER ===
+Two models disagreed:{models_block}
+
+You are the tiebreaker. Analyze the market data and both arguments, then decide.
+Respond ONLY with valid JSON:
+{{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
+
+
 def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None, allow_wait: bool = True,
                    tp_usd: float = 3.0, sl_usd: float = 3.0,
                    leverage: int = 10, trade_amount: float = 10.0,
@@ -197,7 +288,9 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
                    last_signal_direction: str | None = None,
                    last_signal_reasoning: str | None = None,
                    consecutive_waits: int = 0,
-                   current_pnl: float | None = None) -> dict:
+                   current_pnl: float | None = None,
+                   market_context: dict | None = None,
+                   gemini_api_key: str | None = None) -> dict:
     if ohlcv.empty or len(ohlcv) < 50:
         logger.warning("Not enough data for AI signal")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": []}
@@ -211,8 +304,14 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
 
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
+
+    if market_context and ohlcv is not None and not ohlcv.empty:
+        closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
+        market_context["recent_closes"] = closes
+
     prompt = build_prompt(indicators, regime, allow_wait, tp_usd, sl_usd, leverage, trade_amount,
-                          last_signal_direction, last_signal_reasoning, consecutive_waits, current_pnl)
+                          last_signal_direction, last_signal_reasoning, consecutive_waits, current_pnl,
+                          market_context=market_context)
 
     details: list[dict] = []
     with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
@@ -234,27 +333,20 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt}
 
     directions = set(d["direction"] for d in details)
-    debate_happened = len(directions) > 1 and len(details) >= 2
+    tiebreaker_used = False
+    round1_details: list[dict] = []
 
-    if debate_happened:
-        logger.info(f"Split vote {directions} — Round 2 debate")
+    if len(directions) > 1 and len(details) >= 2:
         round1_details = list(details)
-        final_details: list[dict] = []
-        with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
-            futures = {}
-            for d in details:
-                debate_prompt = build_debate_prompt(prompt, details, d["key"])
-                futures[executor.submit(call_groq, d["key"], MODELS[d["key"]].split(":")[-1], debate_prompt, 15, groq_api_key)] = d["key"]
-            for future in as_completed(futures):
-                key = futures[future]
-                try:
-                    result = future.result()
-                    if result:
-                        final_details.append(result)
-                except Exception as e:
-                    logger.warning(f"{key}: debate exception {e}")
-        if final_details:
-            details = final_details
+        logger.info(f"Split vote {directions} — calling Gemini tiebreaker")
+        tiebreaker_prompt = build_tiebreaker_prompt(prompt, details)
+        gemini_result = call_gemini("gemini", "gemini-2.0-flash", tiebreaker_prompt, 30, gemini_api_key)
+        if gemini_result:
+            details = [gemini_result]
+            tiebreaker_used = True
+            logger.info(f"Gemini tiebreaker: {gemini_result['direction']} ({gemini_result['confidence']:.2f})")
+        else:
+            logger.warning("Gemini tiebreaker failed — falling back to Groq aggregation")
 
     votes = {"long": 0.0, "short": 0.0, "wait": 0.0}
     for d in details:
@@ -265,14 +357,14 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
     runner_up = sorted_dirs[1]
     min_win_margin = 0.1 / max(len(keys_to_run), 1)
 
-    if len(details) >= 2 and votes[winner] - votes[runner_up] < min_win_margin and allow_wait:
+    if not tiebreaker_used and len(details) >= 2 and votes[winner] - votes[runner_up] < min_win_margin and allow_wait:
         winner = "wait"
 
     avg_conf = votes[winner] / max(len([d for d in details if d["direction"] == winner]), 1)
 
     reasons = "; ".join(f"{d['name']}: {d['direction']} ({d['confidence']:.2f})" for d in details)
 
-    logger.info(f"AI vote: winner={winner} conf={avg_conf:.2f} models={len(details)} debate={debate_happened}")
+    logger.info(f"AI vote: winner={winner} conf={avg_conf:.2f} models={len(details)} tiebreaker={tiebreaker_used}")
     return {
         "direction": winner,
         "confidence": round(min(avg_conf, 0.95), 2),
@@ -280,25 +372,9 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         "reasoning": reasons,
         "prompt": prompt,
         "model_details": details,
-        "debate_happened": debate_happened,
-        "round1_details": round1_details if debate_happened else [],
+        "tiebreaker_used": tiebreaker_used,
+        "round1_details": round1_details if tiebreaker_used else [],
     }
-
-
-def build_debate_prompt(original_prompt: str, all_details: list[dict], self_key: str) -> str:
-    self_detail = next(d for d in all_details if d["key"] == self_key)
-    others = [d for d in all_details if d["key"] != self_key]
-    if not others:
-        return original_prompt
-    strongest = max(others, key=lambda d: d["confidence"])
-    return f"""{original_prompt}
-
-=== ROUND 2: DEBATE ===
-Your Round 1: {self_detail['direction'].upper()} ({self_detail['confidence']:.2f})
-Strongest opposing: {strongest['name']} → {strongest['direction'].upper()} ({strongest['confidence']:.2f}) — "{strongest['reasoning']}"
-
-Review their argument. You may change your mind or keep your call.
-JSON: {{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
 def _detect_regime(ohlcv: pd.DataFrame) -> str:

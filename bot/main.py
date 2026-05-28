@@ -18,6 +18,7 @@ from bot.config import (
     MAX_DAILY_LOSS_USD,
     AI_LOOP_INTERVAL,
     GROQ_API_KEY,
+    GEMINI_API_KEY,
 )
 from bot.hyperliquid_client import HyperliquidClient
 from bot.order_executor import OrderExecutor
@@ -25,6 +26,7 @@ from bot.db import Database
 from bot.redis_client import RedisClient
 from bot.signals import providers as signal_engine
 from bot.signals.providers import get_model_defs
+from bot.market_data import get_market_context
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -499,6 +501,9 @@ def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | 
             logger.info("Reseeded enabled_models=%s", enabled_models)
         cfg = get_runtime_config()
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
+        gemini_key = redis.get_config("gemini_api_key", GEMINI_API_KEY)
+
+        market_context = get_market_context(hl, "DOGE")
 
         last = redis.get_current_signal()
         last_dir = last["direction"] if last else None
@@ -526,6 +531,8 @@ def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | 
             last_signal_reasoning=last_reason,
             consecutive_waits=c_waits,
             current_pnl=current_pnl,
+            market_context=market_context,
+            gemini_api_key=gemini_key,
         )
 
         signal["_debug_redis_enabled"] = enabled_models
@@ -605,6 +612,7 @@ def seed_redis_config():
         "max_daily_loss": str(MAX_DAILY_LOSS_USD),
         "max_daily_loss_enabled": "1",
         "groq_api_key": GROQ_API_KEY,
+        "gemini_api_key": GEMINI_API_KEY,
     }
     for key, val in defaults.items():
         existing = redis.get_config(key, "")

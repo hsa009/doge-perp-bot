@@ -18,6 +18,13 @@ interface BotStatus {
     reasoning: string
     timestamp?: number
     prompt?: string
+    tiebreaker_used?: boolean
+    round1_details?: {
+      name: string
+      direction: string
+      confidence: number
+      reasoning: string
+    }[]
     model_details?: {
       name: string
       direction: string
