@@ -389,10 +389,7 @@ def trading_loop():
                 if cached and abs(cached.get("size", 0)) > 0:
                     logger.info("Position gone from exchange — closing trade in DB")
                     close_position_in_db()
-                    time.sleep(5)
-                else:
-                    time.sleep(5)
-                    continue
+                time.sleep(5)
             elif float(doge_pos["szi"]) == 0:
                 cached = redis.get_position()
                 if cached and cached.get("size", 0) != 0:
