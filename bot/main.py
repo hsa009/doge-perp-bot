@@ -325,7 +325,6 @@ def close_position_in_db():
     except Exception as ex:
         logger.exception(f"close_position_in_db error: {ex}")
     redis.clear_position()
-    run_ai_signal(allow_wait=True, from_ai_loop=True)
 
 
 def trading_loop():
@@ -355,7 +354,6 @@ def trading_loop():
                         logger.exception(f"Close position error: {e}")
                 redis.clear_position()
                 redis.clear_close_position_signal()
-                run_ai_signal(allow_wait=True, from_ai_loop=True)
                 time.sleep(5)
                 continue
 
