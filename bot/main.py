@@ -531,6 +531,7 @@ def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | 
         signal["_debug_call"] = _signal_call_count
         signal["_debug_interval"] = AI_LOOP_INTERVAL
         details = signal.pop("model_details", [])
+        signal["model_details"] = details
         if from_ai_loop:
             redis.set_current_signal(signal)
         else:
