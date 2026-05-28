@@ -165,8 +165,7 @@ def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key
                 return None
             body = resp.json()
             content = body["choices"][0]["message"]["content"]
-            name = key.rsplit("#", 1)[0]
-            return _parse_response(key, model, name, content)
+            return _parse_response(key, model, model, content)
     except Exception as e:
         logger.debug(f"{key}: {e}")
         return None
