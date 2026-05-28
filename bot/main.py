@@ -485,6 +485,7 @@ def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | 
             redis.set_model_defs(defs)
             redis.set_enabled_models(list(signal_engine.MODEL_KEYS))
             enabled_models = list(signal_engine.MODEL_KEYS)
+            logger.info("Reseeded enabled_models=%s", enabled_models)
         cfg = get_runtime_config()
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
 
@@ -503,7 +504,7 @@ def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | 
 
         signal = signal_engine.generate_signal(
             ohlcv,
-            enabled_models=enabled_models if enabled_models else None,
+            enabled_models=enabled_models,
             allow_wait=(c_waits < 3),
             tp_usd=cfg["tp_usd"],
             sl_usd=cfg["sl_usd"],
@@ -617,16 +618,10 @@ def init_bot():
         logger.info(f"Supabase config load skipped: {e}")
     try:
         defs = get_model_defs()
-        existing_defs = redis.get_model_defs()
-        existing_keys = {d["key"] for d in existing_defs} if existing_defs else set()
-        new_keys = {d["key"] for d in defs}
         redis.set_model_defs(defs)
-        if existing_defs is None or existing_keys != new_keys:
-            enabled = [d["key"] for d in defs]
-            redis.set_enabled_models(enabled)
-            logger.info(f"Seeded {len(defs)} model defs in Redis (enabled: {enabled})")
-        else:
-            logger.info(f"Model defs unchanged ({len(defs)} models)")
+        enabled = [d["key"] for d in defs]
+        redis.set_enabled_models(enabled)
+        logger.info(f"Seeded {len(defs)} model defs (enabled: {enabled})")
     except Exception as e:
         logger.warning(f"Failed to seed model defs: {e}")
     try:

@@ -21,11 +21,16 @@ MIN_CONFIDENCE = float(os.environ.get("MIN_CONFIDENCE", "0.65"))
 LEVERAGE = int(os.environ.get("LEVERAGE", "10"))
 MAX_DAILY_LOSS_USD = float(os.environ.get("MAX_DAILY_LOSS_USD", "2.0"))
 
+OPENROUTER_API_KEYS = [k.strip() for k in (os.environ.get("OPENROUTER_API_KEYS") or os.environ.get("OPENROUTER_API_KEY", "")).split(",") if k.strip()]
+
 AI_MODELS = os.environ.get(
     "AI_MODELS",
-    "groq:llama-3.3-70b-versatile,groq:llama-3.1-8b-instant",
+    os.environ.get(
+        "OPENROUTER_MODELS",
+        "groq:llama-3.3-70b-versatile,groq:llama-3.1-8b-instant",
+    ),
 )
-AI_LOOP_INTERVAL = int(os.environ.get("AI_LOOP_INTERVAL", "600"))
+AI_LOOP_INTERVAL = int(os.environ.get("AI_LOOP_INTERVAL", "300"))
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
