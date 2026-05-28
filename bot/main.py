@@ -155,6 +155,7 @@ def close_position():
             executor.close_position()
             logger.info("Position closed via API")
         redis.clear_position()
+        close_position_in_db()
         return jsonify({"ok": True})
     except Exception as e:
         logger.exception(f"Close position error: {e}")
@@ -532,13 +533,8 @@ def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | 
         signal["_debug_interval"] = AI_LOOP_INTERVAL
         details = signal.pop("model_details", [])
         signal["model_details"] = details
-        if from_ai_loop:
-            redis.set_current_signal(signal)
-        else:
-            existing = redis.get_current_signal()
-            if existing and existing.get("timestamp"):
-                signal["timestamp"] = existing["timestamp"]
-            redis.set_current_signal(signal, preserve_timestamp=True)
+        signal["timestamp"] = time.time()
+        redis.set_current_signal(signal)
         redis.set_model_details(details)
         logger.info(f"Signal: {signal['direction']} ({signal['confidence']:.2f}) — {signal.get('reasoning', '')[:120]}")
 
@@ -582,10 +578,21 @@ def ai_loop():
             if pos and pos.get("size", 0) != 0:
                 time.sleep(30)
                 continue
+
+            last = redis.get_current_signal()
+            last_time = last.get("timestamp", 0) if last else 0
+            wait = max(0, last_time + AI_LOOP_INTERVAL - time.time())
+            if wait > 0:
+                if wait < 60:
+                    time.sleep(wait)
+                else:
+                    time.sleep(60)
+                continue
+
             run_ai_signal(allow_wait=True, from_ai_loop=True)
         except Exception as e:
             logger.exception(f"AI loop error: {e}")
-        time.sleep(AI_LOOP_INTERVAL)
+            time.sleep(60)
 
 
 def seed_redis_config():
