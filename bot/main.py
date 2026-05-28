@@ -1,8 +1,10 @@
 import os
 import json
 import time
+import traceback
 import threading
 import logging
+from dataclasses import dataclass
 import httpx
 import pandas as pd
 from flask import Flask, jsonify
@@ -442,8 +444,16 @@ def trading_loop():
 
 _signal_call_count = 0
 
+@dataclass
+class _LastRunError:
+    error: str | None = None
+    traceback: str | None = None
+    timestamp: float = 0.0
+
+_last_error = _LastRunError()
+
 def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | None:
-    global _signal_call_count
+    global _signal_call_count, _last_error
     _signal_call_count += 1
     try:
         result = hl.info.meta_and_asset_ctxs()
@@ -546,7 +556,18 @@ def run_ai_signal(allow_wait: bool = True, from_ai_loop: bool = True) -> dict | 
         return signal
     except Exception as e:
         logger.exception(f"run_ai_signal error: {e}")
+        tb = traceback.format_exc()
+        _last_error = _LastRunError(error=str(e), traceback=tb, timestamp=time.time())
         return None
+
+
+@app.route("/api/v1/bot/last-error")
+def last_error():
+    return jsonify({
+        "error": _last_error.error,
+        "traceback": _last_error.traceback,
+        "timestamp": _last_error.timestamp,
+    })
 
 
 def ai_loop():
