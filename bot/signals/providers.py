@@ -1,18 +1,16 @@
 import json
 import time
-import random
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 import pandas as pd
 
-from bot.config import AI_MODELS, GROQ_API_KEY, OPENROUTER_API_KEYS
+from bot.config import AI_MODELS, GROQ_API_KEY
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
 
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
@@ -22,7 +20,7 @@ def _build_model_keys() -> dict[str, str]:
     seen: dict[str, int] = {}
     keys: dict[str, str] = {}
     for m in ALL_MODEL_IDS:
-        short = m.split("/")[-1].split(":")[0].replace("-", "").replace(".", "")
+        short = m.split(":")[-1].replace("-", "").replace(".", "").replace("_", "")
         idx = seen.get(short, 0)
         seen[short] = idx + 1
         key = f"{short}#{idx}"
@@ -37,20 +35,9 @@ MODEL_KEYS: list[str] = list(MODELS.keys())
 def get_model_defs() -> list[dict]:
     defs = []
     for key, model_id in MODELS.items():
-        name = key.rsplit("#", 1)[0]
+        name = model_id.split(":")[-1]
         defs.append({"key": key, "model_id": model_id, "name": name})
     return defs
-
-
-def _provider_for(model_id: str) -> str:
-    if model_id.startswith("groq:"):
-        return "groq"
-    return "openrouter"
-
-
-def _strip_provider(model_id: str) -> str:
-    prefix = f"groq:"
-    return model_id[len(prefix):] if model_id.startswith(prefix) else model_id
 
 
 def compute_indicators(ohlcv: pd.DataFrame) -> dict:
@@ -98,7 +85,11 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
 
 def build_prompt(indicators: dict, regime: str = "UNKNOWN", allow_wait: bool = True,
                  tp_usd: float = 3.0, sl_usd: float = 3.0,
-                 leverage: int = 10, trade_amount: float = 10.0) -> str:
+                 leverage: int = 10, trade_amount: float = 10.0,
+                 last_signal_direction: str | None = None,
+                 last_signal_reasoning: str | None = None,
+                 consecutive_waits: int = 0,
+                 current_pnl: float | None = None) -> str:
     i = indicators
     vol_ratio = i["volume"] / i["vol_ma_20"] if i["vol_ma_20"] > 0 else 1.0
     bb_pct = (i["close"] - i["bb_lower"]) / (i["bb_upper"] - i["bb_lower"]) if (i["bb_upper"] - i["bb_lower"]) > 0 else 0.5
@@ -108,6 +99,17 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", allow_wait: bool = T
     notional = trade_amount * leverage
     tp_pct = (tp_usd / notional) * 100
     sl_pct = (sl_usd / notional) * 100
+
+    history_block = ""
+    if last_signal_direction:
+        history_block += f"\nPrevious signal: {last_signal_direction.upper()}"
+        if last_signal_reasoning:
+            history_block += f" — \"{last_signal_reasoning[:80]}\""
+    if current_pnl is not None:
+        history_block += f"\nUnrealized PnL: ${current_pnl:.2f}"
+    if consecutive_waits >= 3:
+        allow_wait = False
+        history_block += "\n⚠️ You have chosen WAIT multiple times. You MUST choose LONG or SHORT now."
 
     wait_rule = "\n- WAIT if trend is unclear or volatility too high" if allow_wait else ""
     direction_enum = '"long"|"short"|"wait"' if allow_wait else '"long"|"short"'
@@ -130,48 +132,9 @@ Trade config:
 - Target profit: ${tp_usd} ({tp_pct:.2f}% move needed)
 - Stop loss: ${sl_usd} ({sl_pct:.2f}% adverse move)
 - Only enter if the market can realistically move {tp_pct:.2f}% in your direction{wait_rule}
-
+{history_block}
 Respond ONLY with valid JSON:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
-
-
-def call_openrouter(key: str, model: str, prompt: str, timeout: int = 15, api_keys: list[str] | None = None) -> dict | None:
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_tokens": 300,
-    }
-    keys = api_keys or OPENROUTER_API_KEYS
-    for attempt, api_key in enumerate(keys):
-        if attempt > 0:
-            time.sleep(random.uniform(3, 6))
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://doge-perp-bot.vercel.app",
-            "X-Title": "DOGE Perp Bot",
-        }
-        try:
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(OPENROUTER_BASE, json=payload, headers=headers)
-                if resp.status_code == 429:
-                    retry_after = int(resp.headers.get("Retry-After", 5))
-                    logger.warning(f"{key} (key#{attempt}): 429 — retry-after={retry_after}s, trying next key")
-                    time.sleep(min(retry_after, 10))
-                    continue
-                if resp.status_code != 200:
-                    logger.warning(f"{key}: HTTP {resp.status_code} {resp.text[:200]}")
-                    return None
-                body = resp.json()
-                content = body["choices"][0]["message"]["content"]
-                name = key.rsplit("#", 1)[0]
-                return _parse_response(key, model, name, content)
-        except Exception as e:
-            logger.debug(f"{key} (key#{attempt}): {e}")
-            continue
-    logger.warning(f"{key}: all {len(keys)} api keys exhausted")
-    return None
 
 
 def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key: str | None = None) -> dict | None:
@@ -228,10 +191,14 @@ def _parse_response(key: str, model: str, name: str, content: str) -> dict | Non
         return None
 
 
-def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None, api_keys: list[str] | None = None, allow_wait: bool = True,
+def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None, allow_wait: bool = True,
                    tp_usd: float = 3.0, sl_usd: float = 3.0,
                    leverage: int = 10, trade_amount: float = 10.0,
-                   groq_api_key: str | None = None) -> dict:
+                   groq_api_key: str | None = None,
+                   last_signal_direction: str | None = None,
+                   last_signal_reasoning: str | None = None,
+                   consecutive_waits: int = 0,
+                   current_pnl: float | None = None) -> dict:
     if ohlcv.empty or len(ohlcv) < 50:
         logger.warning("Not enough data for AI signal")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": []}
@@ -245,19 +212,14 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
 
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
-    prompt = build_prompt(indicators, regime, allow_wait, tp_usd, sl_usd, leverage, trade_amount)
+    prompt = build_prompt(indicators, regime, allow_wait, tp_usd, sl_usd, leverage, trade_amount,
+                          last_signal_direction, last_signal_reasoning, consecutive_waits, current_pnl)
 
     details: list[dict] = []
     with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
         futures = {}
         for k in keys_to_run:
-            model_id = MODELS[k]
-            provider = _provider_for(model_id)
-            actual_model = _strip_provider(model_id)
-            if provider == "groq":
-                futures[executor.submit(call_groq, k, actual_model, prompt, 15, groq_api_key)] = k
-            else:
-                futures[executor.submit(call_openrouter, k, actual_model, prompt, 15, api_keys)] = k
+            futures[executor.submit(call_groq, k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)] = k
 
         for future in as_completed(futures):
             key = futures[future]
@@ -271,6 +233,29 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
     if not details:
         logger.warning("All models failed — returning wait")
         return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt}
+
+    directions = set(d["direction"] for d in details)
+    debate_happened = len(directions) > 1 and len(details) >= 2
+
+    if debate_happened:
+        logger.info(f"Split vote {directions} — Round 2 debate")
+        round1_details = list(details)
+        final_details: list[dict] = []
+        with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
+            futures = {}
+            for d in details:
+                debate_prompt = build_debate_prompt(prompt, details, d["key"])
+                futures[executor.submit(call_groq, d["key"], MODELS[d["key"]].split(":")[-1], debate_prompt, 15, groq_api_key)] = d["key"]
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        final_details.append(result)
+                except Exception as e:
+                    logger.warning(f"{key}: debate exception {e}")
+        if final_details:
+            details = final_details
 
     votes = {"long": 0.0, "short": 0.0, "wait": 0.0}
     for d in details:
@@ -288,7 +273,7 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
 
     reasons = "; ".join(f"{d['name']}: {d['direction']} ({d['confidence']:.2f})" for d in details)
 
-    logger.info(f"AI vote: winner={winner} conf={avg_conf:.2f} models={len(details)}")
+    logger.info(f"AI vote: winner={winner} conf={avg_conf:.2f} models={len(details)} debate={debate_happened}")
     return {
         "direction": winner,
         "confidence": round(min(avg_conf, 0.95), 2),
@@ -296,7 +281,25 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         "reasoning": reasons,
         "prompt": prompt,
         "model_details": details,
+        "debate_happened": debate_happened,
+        "round1_details": round1_details if debate_happened else [],
     }
+
+
+def build_debate_prompt(original_prompt: str, all_details: list[dict], self_key: str) -> str:
+    self_detail = next(d for d in all_details if d["key"] == self_key)
+    others = [d for d in all_details if d["key"] != self_key]
+    if not others:
+        return original_prompt
+    strongest = max(others, key=lambda d: d["confidence"])
+    return f"""{original_prompt}
+
+=== ROUND 2: DEBATE ===
+Your Round 1: {self_detail['direction'].upper()} ({self_detail['confidence']:.2f})
+Strongest opposing: {strongest['name']} → {strongest['direction'].upper()} ({strongest['confidence']:.2f}) — "{strongest['reasoning']}"
+
+Review their argument. You may change your mind or keep your call.
+JSON: {{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
 def _detect_regime(ohlcv: pd.DataFrame) -> str:
