@@ -66,12 +66,14 @@ def bot_status():
     cfg = get_runtime_config()
     cfg["ai_loop_interval"] = str(AI_LOOP_INTERVAL)
     cfg["groq_api_key"] = redis.get_config("groq_api_key", GROQ_API_KEY)
+    remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
     return jsonify({
         "running": running,
         "last_signal": signal,
         "position": position,
         "mark_price": hl.get_current_price(),
         "config": cfg,
+        "remaining_seconds": int(remaining),
     })
 
 
