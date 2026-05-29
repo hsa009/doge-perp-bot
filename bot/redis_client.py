@@ -83,7 +83,7 @@ class RedisClient:
 
     def get_config(self, key: str, default: str) -> str:
         result = self._request("GET", f"config:{key}")
-        if result is not None:
+        if result:
             return result
         return default
 
