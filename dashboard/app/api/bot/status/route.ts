@@ -1,69 +1,22 @@
 import { NextResponse } from "next/server"
-import { redisGet } from "@/lib/redis"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-const HL_INFO = "https://api.hyperliquid.xyz/info"
-
-async function getMarkPrice(): Promise<number | null> {
-  try {
-    const resp = await fetch(HL_INFO, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "allMids" }),
-    })
-    if (!resp.ok) return null
-    const data: any = await resp.json()
-    const mid = data?.mids?.DOGE || data?.DOGE || null
-    return mid ? parseFloat(mid) : null
-  } catch {
-    return null
-  }
-}
+const BOT_API = process.env.BOT_API_URL || "https://ghaith1122331-doge-bot.hf.space"
 
 export async function GET() {
   try {
-    const [runningRaw, signalRaw, positionRaw,
-      tpUsd, slUsd, tradeAmt, lev, minConf, maxLoss, maxLossEn, groqKey] = await Promise.all([
-      redisGet("bot:running"),
-      redisGet("signal:current"),
-      redisGet("position:current"),
-      redisGet("config:tp_usd"),
-      redisGet("config:sl_usd"),
-      redisGet("config:trade_amount"),
-      redisGet("config:leverage"),
-      redisGet("config:min_confidence"),
-      redisGet("config:max_daily_loss"),
-      redisGet("config:max_daily_loss_enabled"),
-      redisGet("config:groq_api_key"),
-    ])
-
-    const position = positionRaw ? JSON.parse(positionRaw) : null
-    const markPrice = await getMarkPrice()
-    if (position && markPrice != null) {
-      position.mark_price = markPrice
+    const resp = await fetch(`${BOT_API}/api/v1/bot/status`, {
+      next: { revalidate: 0 },
+      headers: { "Cache-Control": "no-cache" },
+    })
+    if (!resp.ok) {
+      return NextResponse.json({ error: "Bot API unreachable" }, { status: 502 })
     }
-
-    const body = {
-      running: runningRaw === "1",
-      last_signal: signalRaw ? JSON.parse(signalRaw) : null,
-      position,
-      mark_price: markPrice,
-      config: {
-        tp_usd: tpUsd || "3.0",
-        sl_usd: slUsd || "3.0",
-        trade_amount: tradeAmt || "10.0",
-        leverage: lev || "10",
-        min_confidence: minConf || "0.65",
-        max_daily_loss: maxLoss || "2.0",
-        max_daily_loss_enabled: maxLossEn || "1",
-        groq_api_key: groqKey || "",
-        ai_loop_interval: "600",
-      },
-    }
-    return new NextResponse(JSON.stringify(body), {
+    const data = await resp.json()
+    return new NextResponse(JSON.stringify(data), {
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "private, no-cache, no-store, must-revalidate, max-age=0",
@@ -73,6 +26,6 @@ export async function GET() {
     })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: msg }, { status: 502 })
   }
 }

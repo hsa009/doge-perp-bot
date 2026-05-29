@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const BOT_URL = process.env.BOT_URL || "https://gitr_wg25b-1a4.k.jrnm.app"
+const BOT_URL = process.env.BOT_URL || process.env.BOT_API_URL || "https://ghaith1122331-doge-bot.hf.space"
 
 export async function POST() {
   try {
