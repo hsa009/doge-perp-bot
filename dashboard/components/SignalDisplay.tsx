@@ -21,29 +21,25 @@ interface Props {
     round1_details?: ModelDetail[]
     model_details?: ModelDetail[]
   } | null
-  signalTimestamp?: number
-  aiLoopInterval?: number
+  remainingSeconds?: number
   running?: boolean
 }
 
-export default function SignalDisplay({ signal, signalTimestamp, aiLoopInterval, running }: Props) {
+export default function SignalDisplay({ signal, remainingSeconds, running }: Props) {
   const [expanded, setExpanded] = useState(false)
-  const [remaining, setRemaining] = useState(0)
+  const [remaining, setRemaining] = useState(remainingSeconds ?? 0)
 
   useEffect(() => {
-    if (!running || !signalTimestamp || !aiLoopInterval) {
-      setRemaining(0)
-      return
-    }
-    const tick = () => {
-      const now = Date.now() / 1000
-      const next = signalTimestamp + aiLoopInterval
-      setRemaining(Math.max(0, Math.floor(next - now)))
-    }
-    tick()
-    const id = setInterval(tick, 1000)
+    setRemaining(remainingSeconds ?? 0)
+  }, [remainingSeconds])
+
+  useEffect(() => {
+    if (!running) return
+    const id = setInterval(() => {
+      setRemaining((prev) => Math.max(0, prev - 1))
+    }, 1000)
     return () => clearInterval(id)
-  }, [running, signalTimestamp, aiLoopInterval])
+  }, [running])
 
   if (!signal) {
     return (

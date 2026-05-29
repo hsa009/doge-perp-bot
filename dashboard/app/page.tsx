@@ -44,6 +44,7 @@ interface BotStatus {
     mark_price?: number
   } | null
   mark_price: number | null
+  remaining_seconds?: number
   config: {
     tp_usd: string
     sl_usd: string
@@ -194,8 +195,7 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2">
         <SignalDisplay
           signal={status?.last_signal ?? null}
-          signalTimestamp={status?.last_signal?.timestamp}
-          aiLoopInterval={parseInt(status?.config?.ai_loop_interval || "600")}
+          remainingSeconds={status?.remaining_seconds}
           running={status?.running ?? false}
         />
         <PnLSummary totalPnl={stats.total_pnl} winRate={stats.win_rate} totalTrades={stats.total_trades} />
