@@ -8,6 +8,7 @@ const HL_API = "https://api.hyperliquid.xyz/info"
 
 export async function GET(req: NextRequest) {
   try {
+    const coin = req.nextUrl.searchParams.get("coin") || "DOGE"
     const interval = req.nextUrl.searchParams.get("interval") || "1m"
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") || "200"), 500)
 
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "candleSnapshot",
-        req: { coin: "DOGE", interval, startTime: now - limit * barMs, endTime: now },
+        req: { coin, interval, startTime: now - limit * barMs, endTime: now },
       }),
     })
 

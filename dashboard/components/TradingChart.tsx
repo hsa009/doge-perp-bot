@@ -18,11 +18,12 @@ interface PositionData {
 
 interface Props {
   position: PositionData | null
+  coin?: string
 }
 
 const HL_INFO = "https://api.hyperliquid.xyz/info"
 
-export default function TradingChart({ position }: Props) {
+export default function TradingChart({ position, coin = "DOGE" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const zoneCanvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -151,18 +152,16 @@ export default function TradingChart({ position }: Props) {
     }
   }, [entryPrice, tpPrice, slPrice])
 
-  drawZonesRef.current = drawZones
-
   const fetchCandles = useCallback(async (series: ISeriesApi<"Candlestick"> | null) => {
     try {
-      const resp = await fetch("/api/bot/chart?interval=1m&limit=200")
+      const resp = await fetch(`/api/bot/chart?coin=${coin}&interval=1m&limit=200`)
       const data = await resp.json()
       if (data.candles && data.candles.length) {
         setCandles(data.candles)
         series?.setData(data.candles)
       }
     } catch {}
-  }, [])
+  }, [coin])
 
   const fetchPrice = useCallback(async () => {
     try {
@@ -172,7 +171,7 @@ export default function TradingChart({ position }: Props) {
         body: JSON.stringify({ type: "allMids" }),
       })
       const data = await resp.json()
-      const mid = data?.mids?.DOGE
+      const mid = data?.mids?.[coin]
       if (mid) {
         const px = parseFloat(mid)
         setCurrentPrice(px)
@@ -184,7 +183,7 @@ export default function TradingChart({ position }: Props) {
         }
       }
     } catch {}
-  }, [])
+  }, [coin])
 
   useEffect(() => {
     const series = candleSeriesRef.current
@@ -324,7 +323,7 @@ export default function TradingChart({ position }: Props) {
       )}
 
       <div className="absolute bottom-1.5 right-3 text-[10px] text-zinc-700 font-mono z-10">
-        DOGE / USD · 1m
+        {coin} / USD · 1m
       </div>
     </div>
   )

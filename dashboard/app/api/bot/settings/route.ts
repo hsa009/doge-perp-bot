@@ -8,7 +8,8 @@ export const revalidate = 0
 const SUPABASE_URL = process.env.SUPABASE_URL || ""
 const SUPABASE_KEY = process.env.SUPABASE_KEY || ""
 
-const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "groq_api_key", "gemini_api_key"]
+const VALID_ASSETS = ["DOGE", "SOL"]
+const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "groq_api_key", "gemini_api_key", "active_asset"]
 
 export async function GET() {
   const results = await Promise.all(ALLOWED.map((k) => redisGet(`config:${k}`)))
@@ -52,6 +53,9 @@ export async function POST(req: Request) {
   if (body.max_daily_loss !== undefined) {
     const val = parseFloat(body.max_daily_loss)
     if (isNaN(val) || val < 0.01) errors.push("max_daily_loss must be >= 0.01")
+  }
+  if (body.active_asset !== undefined) {
+    if (!VALID_ASSETS.includes(body.active_asset)) errors.push("active_asset must be DOGE or SOL")
   }
 
   if (errors.length) {
