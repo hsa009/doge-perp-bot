@@ -196,14 +196,28 @@ def kill_switch():
     db.log("CRITICAL", "Emergency stop triggered")
 
 
+def _safe_float(raw: str, default: str) -> float:
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        logger.warning("Bad config value %r, falling back to %s", raw, default)
+        return float(default)
+
+def _safe_int(raw: str, default: str) -> int:
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        logger.warning("Bad config value %r, falling back to %s", raw, default)
+        return int(default)
+
 def get_runtime_config() -> dict:
     return {
-        "tp_usd": float(redis.get_config("tp_usd", str(TAKE_PROFIT_USD))),
-        "sl_usd": float(redis.get_config("sl_usd", str(STOP_LOSS_USD))),
-        "trade_amount": float(redis.get_config("trade_amount", str(TRADE_AMOUNT_USD))),
-        "leverage": int(redis.get_config("leverage", str(LEVERAGE))),
-        "min_confidence": float(redis.get_config("min_confidence", str(MIN_CONFIDENCE))),
-        "max_daily_loss": float(redis.get_config("max_daily_loss", str(MAX_DAILY_LOSS_USD))),
+        "tp_usd": _safe_float(redis.get_config("tp_usd", str(TAKE_PROFIT_USD)), str(TAKE_PROFIT_USD)),
+        "sl_usd": _safe_float(redis.get_config("sl_usd", str(STOP_LOSS_USD)), str(STOP_LOSS_USD)),
+        "trade_amount": _safe_float(redis.get_config("trade_amount", str(TRADE_AMOUNT_USD)), str(TRADE_AMOUNT_USD)),
+        "leverage": _safe_int(redis.get_config("leverage", str(LEVERAGE)), str(LEVERAGE)),
+        "min_confidence": _safe_float(redis.get_config("min_confidence", str(MIN_CONFIDENCE)), str(MIN_CONFIDENCE)),
+        "max_daily_loss": _safe_float(redis.get_config("max_daily_loss", str(MAX_DAILY_LOSS_USD)), str(MAX_DAILY_LOSS_USD)),
         "max_daily_loss_enabled": redis.get_config("max_daily_loss_enabled", "1"),
     }
 
