@@ -55,6 +55,7 @@ interface BotStatus {
     max_daily_loss_enabled: string
     groq_api_key: string
     ai_loop_interval: string
+    active_asset?: string
   }
 }
 
@@ -147,6 +148,7 @@ export default function Dashboard() {
   const pos = status?.position
   const hasPosition = pos && Math.abs(pos.size) > 0 && pos.entry_price > 0
   const markPrice = status?.mark_price ?? pos?.mark_price ?? null
+  const activeAsset = status?.config?.active_asset ?? "DOGE"
 
   if (loading) {
     return <div className="py-20 text-center text-zinc-500">Loading...</div>
@@ -162,7 +164,7 @@ export default function Dashboard() {
             <span className={`font-semibold ${pos.direction === "long" ? "text-green-400" : "text-red-400"}`}>
               {pos.direction?.toUpperCase()}
             </span>
-            <span className="font-mono text-zinc-300">{Math.abs(pos.size)} DOGE</span>
+            <span className="font-mono text-zinc-300">{Math.abs(pos.size)} {pos.coin || activeAsset}</span>
             <span className="text-zinc-500">${pos.entry_price.toFixed(5)}</span>
             <span className={`font-mono ${(pos.unrealized_pnl || 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
               ${(pos.unrealized_pnl || 0).toFixed(2)}
@@ -179,7 +181,7 @@ export default function Dashboard() {
       )}
 
       <div className={`grid gap-4 ${hasPosition ? "lg:grid-cols-[1fr_280px]" : ""}`}>
-        <TradingChart position={hasPosition ? pos : null} />
+        <TradingChart position={hasPosition ? pos : null} coin={activeAsset} />
 
         {hasPosition && (
           <ProfitCalculator

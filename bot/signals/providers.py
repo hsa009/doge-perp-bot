@@ -84,7 +84,7 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
     }
 
 
-def build_prompt(indicators: dict, regime: str = "UNKNOWN", allow_wait: bool = True,
+def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE", allow_wait: bool = True,
                  tp_usd: float = 3.0, sl_usd: float = 3.0,
                  leverage: int = 10, trade_amount: float = 10.0,
                  last_signal_direction: str | None = None,
@@ -144,7 +144,7 @@ Market Context:
     wait_rule = "\n- WAIT if trend is unclear or volatility too high" if allow_wait else ""
     direction_enum = '"long"|"short"|"wait"' if allow_wait else '"long"|"short"'
 
-    return f"""You are a DOGE perpetual futures analyst. Analyze this market data and decide LONG, SHORT, or WAIT.
+    return f"""You are a {coin} perpetual futures analyst. Analyze this market data and decide LONG, SHORT, or WAIT.
 
 Current price: ${i['close']:.5f}
 24h range: ${i['low']:.5f} - ${i['high']:.5f}
@@ -264,7 +264,7 @@ def _parse_response(key: str, model: str, name: str, content: str) -> dict | Non
         return None
 
 
-def build_tiebreaker_prompt(original_prompt: str, all_details: list[dict]) -> str:
+def build_tiebreaker_prompt(original_prompt: str, all_details: list[dict], coin: str = "DOGE") -> str:
     models_block = ""
     for d in all_details:
         models_block += f"\n{d['name']}: {d['direction'].upper()} ({d['confidence']:.2f})"
@@ -281,7 +281,7 @@ Respond ONLY with valid JSON:
 {{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
-def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None, allow_wait: bool = True,
+def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: list[str] | None = None, allow_wait: bool = True,
                    tp_usd: float = 3.0, sl_usd: float = 3.0,
                    leverage: int = 10, trade_amount: float = 10.0,
                    groq_api_key: str | None = None,
@@ -313,7 +313,7 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
         closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
         market_context["recent_closes"] = closes
 
-    prompt = build_prompt(indicators, regime, allow_wait, tp_usd, sl_usd, leverage, trade_amount,
+    prompt = build_prompt(indicators, regime, coin, allow_wait, tp_usd, sl_usd, leverage, trade_amount,
                           last_signal_direction, last_signal_reasoning, consecutive_waits, current_pnl,
                           market_context=market_context)
 
@@ -343,7 +343,7 @@ def generate_signal(ohlcv: pd.DataFrame, enabled_models: list[str] | None = None
     if len(directions) > 1 and len(details) >= 2:
         round1_details = list(details)
         logger.info(f"Split vote {directions} — calling Gemini tiebreaker")
-        tiebreaker_prompt = build_tiebreaker_prompt(prompt, details)
+        tiebreaker_prompt = build_tiebreaker_prompt(prompt, details, coin)
         gemini_result = call_gemini("gemini", "gemini-2.0-flash", tiebreaker_prompt, 30, gemini_api_key)
         if gemini_result:
             details = [gemini_result]

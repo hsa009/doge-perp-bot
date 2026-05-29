@@ -10,25 +10,43 @@ class OrderExecutor:
         self.exchange = exchange
         self.info = info
         self.address = address
+        self._sz_decimals_cache: dict[str, int] = {}
 
-    def _get_sz(self, size_usd: float) -> int:
-        price = float(self.info.all_mids()["DOGE"])
-        return max(int(size_usd / price) + 1, 1)
-
-    def _fmt_px(self, px: float, is_spot: bool = False) -> float:
+    def _get_sz_decimals(self, coin: str) -> int:
+        cached = self._sz_decimals_cache.get(coin)
+        if cached is not None:
+            return cached
         meta = self.info.meta()
-        sz_dec = 5
         for i, asset in enumerate(meta["universe"]):
-            if asset["name"] == "DOGE":
-                sz_dec = self.info.asset_to_sz_decimals.get(i, asset.get("szDecimals", 5))
-                break
-        decimals = (6 if not is_spot else 8) - (sz_dec if isinstance(sz_dec, int) else 5)
+            if asset["name"] == coin:
+                sz_dec = asset.get("szDecimals")
+                if sz_dec is None:
+                    raise Exception(f"szDecimals not found for {coin}")
+                self._sz_decimals_cache[coin] = sz_dec
+                return sz_dec
+        raise Exception(f"Coin {coin} not found in universe")
+
+    def _get_sz(self, coin: str, notional: float) -> int | float:
+        price = float(self.info.all_mids()[coin])
+        sz = notional / price
+        decimals = self._get_sz_decimals(coin)
+        if decimals == 0:
+            return max(int(sz), 1)
+        return round(sz, decimals)
+
+    def _fmt_px(self, px: float, coin: str = "DOGE", is_spot: bool = False) -> float:
+        sz_dec = self._get_sz_decimals(coin)
+        decimals = (6 if not is_spot else 8) - sz_dec
         return round(float(f"{px:.5g}"), max(decimals, 0))
 
-    def open_market(self, is_buy: bool, size_usd: float = POSITION_SIZE_USD, slippage: float = 0.005) -> dict:
-        sz = self._get_sz(size_usd)
+    def open_market(self, coin: str, is_buy: bool, notional: float, slippage: float = 0.005) -> dict:
+        mid_price = float(self.info.all_mids()[coin])
+        sz = self._get_sz(coin, notional)
+        actual_notional = sz * mid_price
+        if actual_notional < 1.0:
+            raise Exception(f"Notional ${actual_notional:.2f} below $1 minimum")
         return self.exchange.market_open(
-            name="DOGE",
+            name=coin,
             is_buy=is_buy,
             sz=sz,
             slippage=slippage,
@@ -37,32 +55,32 @@ class OrderExecutor:
     def close_position(self, coin: str = "DOGE"):
         return self.exchange.market_close(coin=coin)
 
-    def _slippage_price(self, is_buy: bool, slippage: float) -> float:
-        mid = float(self.info.all_mids()["DOGE"])
+    def _slippage_price(self, coin: str, is_buy: bool, slippage: float) -> float:
+        mid = float(self.info.all_mids()[coin])
         px = mid * (1 + slippage) if is_buy else mid * (1 - slippage)
-        return self._fmt_px(px)
+        return self._fmt_px(px, coin)
 
-    def set_take_profit(self, is_buy: bool, size_usd: float, trigger_price: float):
-        sz = self._get_sz(size_usd)
-        px = self._slippage_price(not is_buy, 0)
+    def set_take_profit(self, coin: str, is_buy: bool, notional: float, trigger_price: float):
+        sz = self._get_sz(coin, notional)
+        px = self._slippage_price(coin, not is_buy, 0)
         return self.exchange.order(
-            name="DOGE",
+            name=coin,
             is_buy=not is_buy,
             sz=float(sz),
             limit_px=px,
-            order_type={"trigger": {"triggerPx": self._fmt_px(trigger_price), "isMarket": True, "tpsl": "tp"}},
+            order_type={"trigger": {"triggerPx": self._fmt_px(trigger_price, coin), "isMarket": True, "tpsl": "tp"}},
             reduce_only=True,
         )
 
-    def set_stop_loss(self, is_buy: bool, size_usd: float, trigger_price: float):
-        sz = self._get_sz(size_usd)
-        px = self._slippage_price(not is_buy, 0)
+    def set_stop_loss(self, coin: str, is_buy: bool, notional: float, trigger_price: float):
+        sz = self._get_sz(coin, notional)
+        px = self._slippage_price(coin, not is_buy, 0)
         return self.exchange.order(
-            name="DOGE",
+            name=coin,
             is_buy=not is_buy,
             sz=float(sz),
             limit_px=px,
-            order_type={"trigger": {"triggerPx": self._fmt_px(trigger_price), "isMarket": True, "tpsl": "sl"}},
+            order_type={"trigger": {"triggerPx": self._fmt_px(trigger_price, coin), "isMarket": True, "tpsl": "sl"}},
             reduce_only=True,
         )
 

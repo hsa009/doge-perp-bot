@@ -12,6 +12,7 @@ interface Props {
     max_daily_loss: string
     max_daily_loss_enabled: string
     groq_api_key: string
+    active_asset?: string
   }
   onSaved: () => void
 }
@@ -25,6 +26,7 @@ export default function SettingsPanel({ config, onSaved }: Props) {
   const [maxLoss, setMaxLoss] = useState(config.max_daily_loss)
   const [maxLossEnabled, setMaxLossEnabled] = useState(config.max_daily_loss_enabled === "1")
   const [groqKey, setGroqKey] = useState(config.groq_api_key)
+  const [activeAsset, setActiveAsset] = useState(config.active_asset ?? "DOGE")
   const [saving, setSaving] = useState(false)
 
   const handleSave = async () => {
@@ -42,6 +44,7 @@ export default function SettingsPanel({ config, onSaved }: Props) {
           max_daily_loss: maxLoss,
           max_daily_loss_enabled: maxLossEnabled ? "1" : "0",
           groq_api_key: groqKey,
+          active_asset: activeAsset,
         }),
       })
       onSaved()
@@ -75,6 +78,19 @@ export default function SettingsPanel({ config, onSaved }: Props) {
               <option key={n} value={n}>{n}x</option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-zinc-500">Target Asset</label>
+          <div className="mt-1 flex rounded-lg border border-zinc-700 overflow-hidden">
+            <button
+              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "DOGE" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"}`}
+              onClick={() => setActiveAsset("DOGE")}
+            >DOGE</button>
+            <button
+              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "SOL" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"}`}
+              onClick={() => setActiveAsset("SOL")}
+            >SOL</button>
+          </div>
         </div>
         <div>
           <label className="block text-xs text-zinc-500">Min Confidence</label>

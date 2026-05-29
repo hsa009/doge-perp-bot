@@ -2,7 +2,7 @@ from eth_account import Account
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 
-from bot.config import PHANTOM_EVM_PRIVATE_KEY, LEVERAGE
+from bot.config import PHANTOM_EVM_PRIVATE_KEY, LEVERAGE, ACTIVE_ASSET
 
 
 class HyperliquidClient:
@@ -48,12 +48,15 @@ class HyperliquidClient:
         mids = self.info.all_mids()
         return float(mids[coin])
 
-    def get_doge_position(self) -> dict | None:
+    def get_position(self, coin: str = "DOGE") -> dict | None:
         state = self.info.user_state(self.address)
         for pos in state.get("assetPositions", []):
-            if pos["position"]["coin"] == "DOGE":
+            if pos["position"]["coin"] == coin:
                 return pos["position"]
         return None
+
+    def get_doge_position(self) -> dict | None:
+        return self.get_position("DOGE")
 
     def set_leverage(self, coin: str = "DOGE", leverage: int = 3, is_cross: bool = True):
         return self.exchange.update_leverage(leverage=leverage, name=coin, is_cross=is_cross)
@@ -66,9 +69,9 @@ class HyperliquidClient:
             logger = __import__("logging").getLogger(__name__)
             logger.warning("Hyperliquid not connected — skipping initialize")
             return
-        pos = self.get_doge_position()
+        pos = self.get_position(ACTIVE_ASSET)
         if pos and float(pos["szi"]) != 0:
             logger = __import__("logging").getLogger(__name__)
-            logger.info(f"Existing position detected — skipping leverage change")
+            logger.info(f"Existing {ACTIVE_ASSET} position detected — skipping leverage change")
         else:
-            self.set_leverage("DOGE", leverage or LEVERAGE, is_cross=True)
+            self.set_leverage(ACTIVE_ASSET, leverage or LEVERAGE, is_cross=True)
