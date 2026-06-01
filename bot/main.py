@@ -200,6 +200,10 @@ def set_active_asset():
             return jsonify({"ok": False, "error": "Asset must be DOGE or SOL"}), 400
         current = redis.get_config("active_asset", ACTIVE_ASSET)
         if asset == current:
+            pending = redis.get_config("pending_asset", "")
+            if pending:
+                redis.set_config("pending_asset", "")
+                logger.info(f"Pending switch to {pending} cancelled")
             return jsonify({"ok": True, "asset": asset})
         has_position = False
         for coin in ("DOGE", "SOL"):
