@@ -71,6 +71,14 @@ def bot_status():
     remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
     active_asset = cfg.get("active_asset", "DOGE")
     pending_asset = redis.get_config("pending_asset", "")
+    # If a pending switch exists but a position is open for a different coin, show the position's coin
+    if pending_asset:
+        for check_coin in ("DOGE", "SOL"):
+            check_pos = hl.get_position(check_coin)
+            if check_pos and float(check_pos["szi"]) != 0 and check_coin != active_asset:
+                cfg["active_asset"] = check_coin
+                active_asset = check_coin
+                break
     return jsonify({
         "running": running,
         "last_signal": signal,
@@ -417,6 +425,14 @@ def trading_loop():
 
             cfg = get_runtime_config()
             coin = cfg.get("active_asset", "DOGE")
+
+            # If a position exists for a different coin than active_asset, use the position's coin
+            for check_coin in ("DOGE", "SOL"):
+                check_pos = hl.get_position(check_coin)
+                if check_pos and float(check_pos["szi"]) != 0 and check_coin != coin:
+                    logger.warning(f"Position open for {check_coin} but active_asset is {coin} — correcting to {check_coin}")
+                    coin = check_coin
+                    break
 
             # Handle close-position signal from dashboard
             if redis.get_close_position_signal():
