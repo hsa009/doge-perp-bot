@@ -274,6 +274,17 @@ def get_runtime_config() -> dict:
     }
 
 
+def _validate_trade_config(coin: str, direction: str) -> dict | None:
+    cfg = get_runtime_config()
+    size_usd = cfg["trade_amount"]
+    lev = cfg["leverage"]
+    notional = size_usd * lev
+    logger.info(f"VALIDATE_CONFIG: coin={coin}, dir={direction}, margin=${size_usd}, lev={lev}x, notional=${notional:.2f}, tp=${cfg['tp_usd']}, sl=${cfg['sl_usd']}")
+    if size_usd <= 0 or lev <= 0 or notional < 1.0:
+        logger.error(f"INVALID_CONFIG: refusing trade — size={size_usd}, lev={lev}, notional={notional:.2f}")
+        return None
+    return cfg
+
 def _place_tp_sl(coin: str, is_buy: bool, notional: float, tp_price: float, sl_price: float) -> dict:
     results = {"tp": None, "sl": None}
     try:
@@ -296,18 +307,17 @@ def _place_tp_sl(coin: str, is_buy: bool, notional: float, tp_price: float, sl_p
 
 
 def open_trade(signal: dict, coin: str = "DOGE") -> bool:
-    cfg = get_runtime_config()
+    # Fresh config re-read right before execution
+    cfg = _validate_trade_config(coin, signal["direction"])
+    if cfg is None:
+        return False
     is_buy = signal["direction"] == "long"
     entry_price = hl.get_current_price(coin)
     size_usd = cfg["trade_amount"]
     lev = cfg["leverage"]
     notional = size_usd * lev
 
-    if notional < 1.0:
-        logger.warning(f"Notional ${notional:.2f} below $1 minimum, refusing trade")
-        return False
-
-    logger.info(f"Opening {signal['direction']} {coin} trade — confidence: {signal['confidence']:.2f} @ ${entry_price:.5f} (margin=${size_usd}, leverage={lev}x, notional=${notional:.2f})")
+    logger.info(f"COMMITTING TRADE: {signal['direction']} {coin} — confidence: {signal['confidence']:.2f} @ ${entry_price:.5f} (margin=${size_usd}, leverage={lev}x, notional=${notional:.2f})")
 
     hl.set_leverage(coin, lev, is_cross=True)
     result = executor.open_market(coin, is_buy, notional)
@@ -529,6 +539,10 @@ def trading_loop():
                     redis.clear_position()
                     time.sleep(3)
 
+            validated = _validate_trade_config(coin, signal["direction"])
+            if validated is None:
+                time.sleep(10)
+                continue
             open_trade(signal, coin)
             time.sleep(10)
 
