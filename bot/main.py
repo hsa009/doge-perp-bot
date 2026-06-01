@@ -70,6 +70,7 @@ def bot_status():
     cfg["groq_api_key"] = redis.get_config("groq_api_key", GROQ_API_KEY)
     remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
     active_asset = cfg.get("active_asset", "DOGE")
+    pending_asset = redis.get_config("pending_asset", "")
     return jsonify({
         "running": running,
         "last_signal": signal,
@@ -77,6 +78,7 @@ def bot_status():
         "mark_price": hl.get_current_price(active_asset),
         "config": cfg,
         "remaining_seconds": int(remaining),
+        "pending_asset": pending_asset,
     })
 
 
@@ -173,6 +175,7 @@ def close_position():
             logger.info(f"Position closed via API ({coin})")
         redis.clear_position()
         close_position_in_db()
+        _apply_pending_asset()
         return jsonify({"ok": True})
     except Exception as e:
         logger.exception(f"Close position error: {e}")
@@ -187,11 +190,21 @@ def set_active_asset():
         asset = data.get("asset", "").upper()
         if asset not in ("DOGE", "SOL"):
             return jsonify({"ok": False, "error": "Asset must be DOGE or SOL"}), 400
+        current = redis.get_config("active_asset", ACTIVE_ASSET)
+        if asset == current:
+            return jsonify({"ok": True, "asset": asset})
+        has_position = False
         for coin in ("DOGE", "SOL"):
             pos = hl.get_position(coin)
             if pos and float(pos["szi"]) != 0:
-                return jsonify({"ok": False, "error": f"Cannot switch asset while {coin} position is open"}), 400
+                has_position = True
+                break
+        if has_position:
+            redis.set_config("pending_asset", asset)
+            logger.info(f"Pending asset set to {asset} (position open)")
+            return jsonify({"ok": True, "pending": True, "asset": asset})
         redis.set_config("active_asset", asset)
+        redis.set_config("pending_asset", "")
         logger.info(f"Active asset switched to {asset}")
         return jsonify({"ok": True, "asset": asset})
     except Exception as e:
@@ -225,6 +238,14 @@ def kill_switch():
         logger.exception(f"Kill switch error: {e}")
     db.log("CRITICAL", "Emergency stop triggered")
 
+
+def _apply_pending_asset():
+    pending = redis.get_config("pending_asset", "")
+    if pending:
+        logger.info(f"Pending asset {pending} detected — activating")
+        redis.set_config("active_asset", pending)
+        redis.set_config("pending_asset", "")
+        logger.info(f"Active asset switched to {pending} (was pending)")
 
 def _safe_float(raw: str, default: str) -> float:
     try:
@@ -402,6 +423,7 @@ def trading_loop():
                         logger.exception(f"Close position error: {e}")
                 redis.clear_position()
                 redis.clear_close_position_signal()
+                _apply_pending_asset()
                 time.sleep(5)
                 continue
 
@@ -448,12 +470,14 @@ def trading_loop():
                 if cached and abs(cached.get("size", 0)) > 0:
                     logger.info("Position gone from exchange — closing trade in DB")
                     close_position_in_db(coin)
+                    _apply_pending_asset()
                 time.sleep(5)
             elif float(pos["szi"]) == 0:
                 cached = redis.get_position()
                 if cached and cached.get("size", 0) != 0:
                     logger.info("Position closed (sz=0)")
                     close_position_in_db(coin)
+                    _apply_pending_asset()
 
             signal = redis.get_current_signal()
             if not signal:

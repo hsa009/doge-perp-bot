@@ -14,10 +14,11 @@ interface Props {
     groq_api_key: string
     active_asset?: string
   }
+  pendingAsset?: string
   onSaved: () => void
 }
 
-export default function SettingsPanel({ config, onSaved }: Props) {
+export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) {
   const [tp, setTp] = useState(config.tp_usd)
   const [sl, setSl] = useState(config.sl_usd)
   const [amount, setAmount] = useState(config.trade_amount)
@@ -83,13 +84,13 @@ export default function SettingsPanel({ config, onSaved }: Props) {
           <label className="block text-xs text-zinc-500">Target Asset</label>
           <div className="mt-1 flex rounded-lg border border-zinc-700 overflow-hidden">
             <button
-              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "DOGE" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"}`}
+              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "DOGE" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"} ${pendingAsset === "DOGE" ? "animate-pulse text-amber-300" : ""}`}
               onClick={() => setActiveAsset("DOGE")}
-            >DOGE</button>
+            >DOGE{pendingAsset === "DOGE" && <span className="ml-1 text-[10px]">(pending)</span>}</button>
             <button
-              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "SOL" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"}`}
+              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "SOL" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"} ${pendingAsset === "SOL" ? "animate-pulse text-amber-300" : ""}`}
               onClick={() => setActiveAsset("SOL")}
-            >SOL</button>
+            >SOL{pendingAsset === "SOL" && <span className="ml-1 text-[10px]">(pending)</span>}</button>
           </div>
         </div>
         <div>
