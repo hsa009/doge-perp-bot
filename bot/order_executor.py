@@ -1,8 +1,11 @@
+import logging
 from decimal import Decimal, ROUND_HALF_UP
 
 from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from bot.config import POSITION_SIZE_USD
+
+logger = logging.getLogger(__name__)
 
 
 class OrderExecutor:
@@ -31,8 +34,11 @@ class OrderExecutor:
         sz = notional / price
         decimals = self._get_sz_decimals(coin)
         if decimals == 0:
-            return max(int(sz), 1)
-        return round(sz, decimals)
+            result = max(int(sz), 1)
+        else:
+            result = round(sz, decimals)
+        logger.info(f"_get_sz: coin={coin}, target_notional=${notional:.2f}, price=${price:.5f}, sz_decimals={decimals}, sz={result}")
+        return result
 
     def _fmt_px(self, px: float, coin: str = "DOGE", is_spot: bool = False) -> float:
         sz_dec = self._get_sz_decimals(coin)
@@ -43,6 +49,7 @@ class OrderExecutor:
         mid_price = float(self.info.all_mids()[coin])
         sz = self._get_sz(coin, notional)
         actual_notional = sz * mid_price
+        logger.info(f"open_market: coin={coin}, dir={'BUY' if is_buy else 'SELL'}, sz={sz}, mid_price=${mid_price:.5f}, estimated_notional=${actual_notional:.2f}, slippage={slippage}")
         if actual_notional < 1.0:
             raise Exception(f"Notional ${actual_notional:.2f} below $1 minimum")
         return self.exchange.market_open(
