@@ -29,11 +29,13 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
   const [groqKey, setGroqKey] = useState(config.groq_api_key)
   const [activeAsset, setActiveAsset] = useState(config.active_asset ?? "DOGE")
   const [saving, setSaving] = useState(false)
+  const [pendingMsg, setPendingMsg] = useState<string | null>(null)
 
   const handleSave = async () => {
     setSaving(true)
+    setPendingMsg(null)
     try {
-      await fetch("/api/bot/settings", {
+      const resp = await fetch("/api/bot/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -48,6 +50,10 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
           active_asset: activeAsset,
         }),
       })
+      const data = await resp.json()
+      if (data?.pending) {
+        setPendingMsg(`Will switch to ${activeAsset} when current position closes`)
+      }
       onSaved()
     } finally {
       setSaving(false)
@@ -111,13 +117,18 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
           </div>
         </div>
         <div className="flex items-end">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save Settings"}
-          </button>
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save Settings"}
+            </button>
+            {pendingMsg && (
+              <span className="text-[11px] text-amber-400 text-center">{pendingMsg}</span>
+            )}
+          </div>
         </div>
       </div>
       <div className="mt-3">

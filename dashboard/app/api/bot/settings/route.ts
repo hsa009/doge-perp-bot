@@ -7,6 +7,7 @@ export const revalidate = 0
 
 const SUPABASE_URL = process.env.SUPABASE_URL || ""
 const SUPABASE_KEY = process.env.SUPABASE_KEY || ""
+const BOT_API = process.env.BOT_API_URL || "https://ghaith1122331-doge-bot.hf.space"
 
 const VALID_ASSETS = ["DOGE", "SOL"]
 const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "groq_api_key", "gemini_api_key", "active_asset"]
@@ -63,10 +64,26 @@ export async function POST(req: Request) {
   }
 
   const ops: Promise<void>[] = []
+  let assetResult: { ok: boolean; pending?: boolean; asset?: string; error?: string } | null = null
 
   for (const key of ALLOWED) {
     if (body[key] !== undefined) {
-      ops.push(redisSet(`config:${key}`, String(body[key])))
+      if (key === "active_asset") {
+        // Proxy asset switch through bot API so position check + pending logic works
+        try {
+          const resp = await fetch(`${BOT_API}/api/v1/bot/asset`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ asset: body.active_asset }),
+            signal: AbortSignal.timeout(15000),
+          })
+          assetResult = await resp.json()
+        } catch (e) {
+          assetResult = { ok: false, error: "Bot API unreachable" }
+        }
+      } else {
+        ops.push(redisSet(`config:${key}`, String(body[key])))
+      }
     }
   }
 
@@ -75,7 +92,7 @@ export async function POST(req: Request) {
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
       await Promise.all(
-        ALLOWED.filter((k) => body[k] !== undefined).map((key) =>
+        ALLOWED.filter((k) => body[k] !== undefined && k !== "active_asset").map((key) =>
           fetch(`${SUPABASE_URL}/rest/v1/bot_config`, {
             method: "POST",
             headers: {
@@ -93,5 +110,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json(assetResult || { ok: true })
 }
