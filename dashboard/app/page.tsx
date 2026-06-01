@@ -45,6 +45,7 @@ interface BotStatus {
   } | null
   mark_price: number | null
   remaining_seconds?: number
+  pending_asset?: string
   config: {
     tp_usd: string
     sl_usd: string
@@ -158,6 +159,13 @@ export default function Dashboard() {
     <div className="space-y-4">
       <StatusCard running={status?.running ?? false} onToggle={handleToggle} loading={toggling} />
 
+      {status?.pending_asset && hasPosition && (
+        <div className="rounded-xl border border-amber-700/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">
+          <span className="font-medium">⏳ Pending switch to {status.pending_asset}</span>
+          <span className="ml-1 text-amber-400/80">— will auto-switch when current position closes</span>
+        </div>
+      )}
+
       {hasPosition && (
         <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-2">
           <div className="flex items-center gap-4 text-sm">
@@ -222,6 +230,7 @@ export default function Dashboard() {
 
       <SettingsPanel
         config={status?.config ?? defaultConfig}
+        pendingAsset={status?.pending_asset}
         onSaved={fetchStatus}
       />
 
