@@ -192,6 +192,7 @@ def close_position():
         redis.clear_position()
         close_position_in_db()
         _apply_pending_asset()
+        redis.clear_current_signal()
         return jsonify({"ok": True})
     except Exception as e:
         logger.exception(f"Close position error: {e}")
@@ -542,6 +543,7 @@ def trading_loop():
                 redis.clear_position()
                 redis.clear_close_position_signal()
                 _apply_pending_asset()
+                redis.clear_current_signal()
                 time.sleep(5)
                 continue
 
@@ -592,6 +594,7 @@ def trading_loop():
                     logger.info("Position gone from exchange — closing trade in DB")
                     close_position_in_db(coin)
                     _apply_pending_asset()
+                    redis.clear_current_signal()
                 time.sleep(5)
             elif float(pos["szi"]) == 0:
                 cached = redis.get_position()
@@ -599,6 +602,7 @@ def trading_loop():
                     logger.info("Position closed (sz=0)")
                     close_position_in_db(coin)
                     _apply_pending_asset()
+                    redis.clear_current_signal()
 
             signal = redis.get_current_signal()
             if not signal:
