@@ -53,6 +53,9 @@ class RedisClient:
             return json.loads(result)
         return None
 
+    def clear_current_signal(self):
+        self._request("DEL", "signal:current")
+
     def set_position(self, position: dict):
         self._request("SET", "position:current", json.dumps(position))
 
