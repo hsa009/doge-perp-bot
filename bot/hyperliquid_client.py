@@ -1,14 +1,35 @@
+import time
+import logging
+
 from eth_account import Account
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
+from hyperliquid.utils.error import ClientError
 
 from bot.config import PHANTOM_EVM_PRIVATE_KEY, LEVERAGE, ACTIVE_ASSET
+
+logger = logging.getLogger(__name__)
+
+
+def _retry(fn, max_retries=5, base_delay=2):
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except ClientError as e:
+            last_exc = e
+            if e.status_code == 429:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Rate limited (attempt {attempt+1}/{max_retries}), retrying in {delay}s: {e}")
+                time.sleep(delay)
+            else:
+                raise
+    raise last_exc
 
 
 class HyperliquidClient:
     def __init__(self):
         if not PHANTOM_EVM_PRIVATE_KEY or PHANTOM_EVM_PRIVATE_KEY == "your_64_char_hex_key":
-            logger = __import__("logging").getLogger(__name__)
             logger.warning("No valid PHANTOM_EVM_PRIVATE_KEY — bot will start without Hyperliquid")
             self.wallet = None
             self.info = None
@@ -16,8 +37,8 @@ class HyperliquidClient:
             self.address = "0x0000000000000000000000000000000000000000"
             return
         self.wallet = Account.from_key(PHANTOM_EVM_PRIVATE_KEY)
-        self.info = Info("https://api.hyperliquid.xyz", skip_ws=True)
-        self.exchange = Exchange(self.wallet, "https://api.hyperliquid.xyz")
+        self.info = _retry(lambda: Info("https://api.hyperliquid.xyz", skip_ws=True))
+        self.exchange = _retry(lambda: Exchange(self.wallet, "https://api.hyperliquid.xyz"))
         self.address = self.wallet.address
 
     def get_balance(self) -> dict:
@@ -66,12 +87,14 @@ class HyperliquidClient:
 
     def initialize(self, leverage: int | None = None):
         if not self.info or not self.exchange:
-            logger = __import__("logging").getLogger(__name__)
             logger.warning("Hyperliquid not connected — skipping initialize")
             return
-        pos = self.get_position(ACTIVE_ASSET)
-        if pos and float(pos["szi"]) != 0:
-            logger = __import__("logging").getLogger(__name__)
-            logger.info(f"Existing {ACTIVE_ASSET} position detected — skipping leverage change")
-        else:
-            self.set_leverage(ACTIVE_ASSET, leverage or LEVERAGE, is_cross=True)
+
+        def _do_init():
+            pos = self.get_position(ACTIVE_ASSET)
+            if pos and float(pos["szi"]) != 0:
+                logger.info(f"Existing {ACTIVE_ASSET} position detected — skipping leverage change")
+            else:
+                self.set_leverage(ACTIVE_ASSET, leverage or LEVERAGE, is_cross=True)
+
+        _retry(_do_init)
