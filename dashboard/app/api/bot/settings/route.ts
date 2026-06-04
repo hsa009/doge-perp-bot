@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import { redisGet, redisSet } from "@/lib/redis"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -13,17 +12,20 @@ const VALID_ASSETS = ["DOGE", "SOL"]
 const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "groq_api_key", "gemini_api_key", "active_asset"]
 
 export async function GET() {
-  const results = await Promise.all(ALLOWED.map((k) => redisGet(`config:${k}`)))
-  const config: Record<string, string> = {}
-  for (let i = 0; i < ALLOWED.length; i++) {
-    config[ALLOWED[i]] = results[i] || ""
+  try {
+    const resp = await fetch(`${BOT_API}/api/v1/bot/status`, {
+      signal: AbortSignal.timeout(15000),
+    })
+    const data = await resp.json()
+    return NextResponse.json(data.config || {}, {
+      headers: {
+        "Cache-Control": "private, no-cache, no-store, must-revalidate, max-age=0",
+        "Vercel-CDN-Cache-Control": "no-cache",
+      },
+    })
+  } catch {
+    return NextResponse.json({ error: "Bot API unreachable" }, { status: 502 })
   }
-  return new NextResponse(JSON.stringify(config), {
-    headers: {
-      "Cache-Control": "private, no-cache, no-store, must-revalidate, max-age=0",
-      "Vercel-CDN-Cache-Control": "no-cache",
-    },
-  })
 }
 
 export async function POST(req: Request) {
@@ -63,32 +65,43 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, errors }, { status: 400 })
   }
 
-  const ops: Promise<void>[] = []
   let assetResult: { ok: boolean; pending?: boolean; asset?: string; error?: string } | null = null
 
-  for (const key of ALLOWED) {
-    if (body[key] !== undefined) {
-      if (key === "active_asset") {
-        // Proxy asset switch through bot API so position check + pending logic works
-        try {
-          const resp = await fetch(`${BOT_API}/api/v1/bot/asset`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ asset: body.active_asset }),
-            signal: AbortSignal.timeout(15000),
-          })
-          assetResult = await resp.json()
-        } catch (e) {
-          assetResult = { ok: false, error: "Bot API unreachable" }
-        }
-      } else {
-        ops.push(redisSet(`config:${key}`, String(body[key])))
-      }
+  // Proxy active_asset through bot's asset endpoint (position check + pending logic)
+  if (body.active_asset !== undefined) {
+    try {
+      const resp = await fetch(`${BOT_API}/api/v1/bot/asset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ asset: body.active_asset }),
+        signal: AbortSignal.timeout(15000),
+      })
+      assetResult = await resp.json()
+    } catch {
+      assetResult = { ok: false, error: "Bot API unreachable" }
     }
   }
 
-  await Promise.all(ops)
+  // Proxy all non-asset settings through bot API (writes to Redis via bot, not dashboard)
+  const nonAssetKeys = ALLOWED.filter((k) => k !== "active_asset" && body[k] !== undefined)
+  if (nonAssetKeys.length > 0) {
+    const settingsPayload: Record<string, string> = {}
+    for (const key of nonAssetKeys) {
+      settingsPayload[key] = String(body[key])
+    }
+    try {
+      await fetch(`${BOT_API}/api/v1/bot/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settingsPayload),
+        signal: AbortSignal.timeout(15000),
+      })
+    } catch (e) {
+      console.warn("Failed to save settings via bot API:", e)
+    }
+  }
 
+  // Persist to Supabase
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
       await Promise.all(

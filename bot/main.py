@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 import httpx
 import pandas as pd
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 from bot.config import (
     TRADE_AMOUNT_USD,
@@ -175,12 +175,20 @@ def close_position():
     try:
         coin = get_runtime_config().get("active_asset", "DOGE")
         pos = hl.get_position(coin)
-        if pos and float(pos["szi"]) != 0:
+        if pos and abs(float(pos["szi"])) >= 0.01:
             open_orders = hl.get_open_orders()
-            for o in open_orders:
-                executor.exchange.cancel(o["coin"], o["oid"])
+            for i, o in enumerate(open_orders):
+                try:
+                    executor.exchange.cancel(o["coin"], o["oid"])
+                except Exception:
+                    logger.warning(f"Failed to cancel order {o.get('oid')}, continuing")
+                if i < len(open_orders) - 1:
+                    time.sleep(0.5)
+            time.sleep(0.5)
             executor.close_position(coin=coin)
             logger.info(f"Position closed via API ({coin})")
+        else:
+            logger.info(f"No meaningful position to close for {coin} (sz={float(pos['szi']) if pos else 0})")
         redis.clear_position()
         close_position_in_db()
         _apply_pending_asset()
@@ -236,6 +244,73 @@ def version2():
 @app.route("/version")
 def version3():
     return jsonify({"version": "2026-05-24-re-ask"})
+
+
+@app.route("/api/v1/bot/start", methods=["POST"])
+def bot_start():
+    redis.set_bot_running(True)
+    logger.info("Bot started via API")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/v1/bot/stop", methods=["POST"])
+def bot_stop():
+    redis.set_bot_running(False)
+    logger.info("Bot stopped via API")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/v1/bot/settings", methods=["POST"])
+def bot_settings():
+    try:
+        body = request.get_json()
+        if not body:
+            return jsonify({"ok": False, "error": "No body"}), 400
+        for key, value in body.items():
+            redis.set_config(key, str(value))
+        logger.info(f"Settings updated: {body}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/v1/bot/models", methods=["GET", "POST"])
+def bot_models():
+    if request.method == "GET":
+        try:
+            from bot.signals.providers import MODEL_KEYS
+            defs = redis.get_model_defs()
+            enabled = redis.get_enabled_models()
+            details = redis.get_model_details()
+            models = [
+                {
+                    "key": d["key"],
+                    "name": d["name"],
+                    "model_id": d.get("model_id", d.get("model", "")),
+                    "enabled": d["key"] in enabled,
+                    "last": next((det for det in details if det.get("key") == d["key"]), None),
+                }
+                for d in defs
+            ]
+            return jsonify({"models": models})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # POST - toggle model enabled
+    try:
+        body = request.get_json()
+        key = body.get("key")
+        enabled = body.get("enabled", False)
+        current = redis.get_enabled_models()
+        if enabled:
+            if key not in current:
+                current.append(key)
+        else:
+            current = [k for k in current if k != key]
+        redis.set_enabled_models(current)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 def kill_switch():
@@ -301,15 +376,22 @@ def _place_tp_sl(coin: str, is_buy: bool, notional: float, tp_price: float, sl_p
     results = {"tp": None, "sl": None}
     try:
         open_orders = hl.get_open_orders()
-        for o in open_orders:
-            executor.exchange.cancel(o["coin"], o["oid"])
+        for i, o in enumerate(open_orders):
+            try:
+                executor.exchange.cancel(o["coin"], o["oid"])
+            except Exception:
+                logger.warning(f"Failed to cancel order {o.get('oid')}, continuing")
+            if i < len(open_orders) - 1:
+                time.sleep(0.3)
     except Exception as e:
         logger.warning(f"Cancel existing orders: {e}")
+    time.sleep(0.3)
     try:
         results["tp"] = executor.set_take_profit(coin, is_buy, notional, tp_price)
         logger.info(f"TP result: {results['tp']}")
     except Exception as e:
         logger.error(f"TP placement failed: {e}")
+    time.sleep(0.3)
     try:
         results["sl"] = executor.set_stop_loss(coin, is_buy, notional, sl_price)
         logger.info(f"SL result: {results['sl']}")
@@ -445,8 +527,14 @@ def trading_loop():
                 if pos and float(pos["szi"]) != 0:
                     try:
                         open_orders = hl.get_open_orders()
-                        for o in open_orders:
-                            executor.exchange.cancel(o["coin"], o["oid"])
+                        for i, o in enumerate(open_orders):
+                            try:
+                                executor.exchange.cancel(o["coin"], o["oid"])
+                            except Exception:
+                                logger.warning(f"Close signal cancel failed for order {o.get('oid')}, continuing")
+                            if i < len(open_orders) - 1:
+                                time.sleep(0.3)
+                        time.sleep(0.3)
                         executor.close_position(coin=coin)
                         logger.info(f"Position closed via dashboard signal ({coin})")
                     except Exception as e:
@@ -465,19 +553,22 @@ def trading_loop():
                 entry_px = float(pos["entryPx"])
                 sz = abs(float(pos["szi"]))
                 notional = sz * entry_px
-                tp_price = cached.get("tp_price") if cached else None
-                sl_price = cached.get("sl_price") if cached else None
-                if tp_price is None or sl_price is None:
-                    logger.info("TP/SL missing — placing now")
-                    is_buy = float(pos["szi"]) > 0
-                    tp_ratio = cfg["tp_usd"] / notional
-                    sl_ratio = cfg["sl_usd"] / notional
-                    if is_buy:
-                        tp_price = entry_px * (1 + tp_ratio)
-                        sl_price = entry_px * (1 - sl_ratio)
-                    else:
-                        tp_price = entry_px * (1 - tp_ratio)
-                        sl_price = entry_px * (1 + sl_ratio)
+                is_buy = float(pos["szi"]) > 0
+                tp_ratio = cfg["tp_usd"] / notional
+                sl_ratio = cfg["sl_usd"] / notional
+                if is_buy:
+                    tp_price = entry_px * (1 + tp_ratio)
+                    sl_price = entry_px * (1 - sl_ratio)
+                else:
+                    tp_price = entry_px * (1 - tp_ratio)
+                    sl_price = entry_px * (1 + sl_ratio)
+                open_orders = hl.get_open_orders()
+                existing_reduce_only = [
+                    o for o in open_orders
+                    if o.get("coin") == coin and o.get("reduceOnly", False)
+                ]
+                if len(existing_reduce_only) < 2:
+                    logger.info(f"TP/SL missing ({len(existing_reduce_only)} reduceOnly orders) — placing now")
                     _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
                 try:
                     account_value = hl.get_balance()["account_value"]
@@ -550,8 +641,14 @@ def trading_loop():
                     logger.info(f"Flip detected: existing {existing_dir} {coin} vs signal {signal['direction']}")
                     try:
                         open_orders = hl.get_open_orders()
-                        for o in open_orders:
-                            executor.exchange.cancel(o["coin"], o["oid"])
+                        for i, o in enumerate(open_orders):
+                            try:
+                                executor.exchange.cancel(o["coin"], o["oid"])
+                            except Exception:
+                                logger.warning(f"Flip cancel failed for order {o.get('oid')}, continuing")
+                            if i < len(open_orders) - 1:
+                                time.sleep(0.3)
+                        time.sleep(0.3)
                         executor.close_position(coin=coin)
                         logger.info(f"Closed {coin} position for flip")
                     except Exception as e:
