@@ -766,6 +766,7 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
         signal["_debug_interval"] = AI_LOOP_INTERVAL
         signal["_debug_gemini_count"] = len(gemini_api_keys)
         signal["_debug_gemini_str"] = gemini_keys_str[:50] if gemini_keys_str else "empty"
+        signal["_debug_gemini_model"] = GEMINI_MODEL
         details = signal.pop("model_details", [])
         signal["model_details"] = details
         signal["timestamp"] = time.time()
@@ -806,21 +807,33 @@ def test_gemini():
     import os, traceback, json, httpx
     keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
     results = {}
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+    
+    from bot.config import GEMINI_MODEL as CFG_MODEL
+    results["_config_model"] = CFG_MODEL
+    results["_config_model_repr"] = repr(CFG_MODEL)
+    
     for i, k in enumerate(keys[:2]):
         key_label = f"key{i}"
-        model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={k}"
         try:
             payload = {
-                "contents": [{"parts": [{"text": "Reply JSON: {\"ok\": true}"}]}],
+                "contents": [{"parts": [{"text": 'Reply JSON: {"ok": true}'}]}],
                 "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400},
             }
             with httpx.Client(timeout=30) as client:
                 resp = client.post(url, json=payload)
-                results[key_label] = f"HTTP {resp.status_code}"
                 if resp.status_code == 200:
                     body = resp.json()
-                    results[key_label] = "ok"
+                    candidates = body.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            results[key_label] = f"ok text={parts[0].get('text','')[:50]}"
+                        else:
+                            results[key_label] = f"no_parts finish={candidates[0].get('finishReason')}"
+                    else:
+                        results[key_label] = "no_candidates"
                 else:
                     results[key_label] = f"HTTP {resp.status_code}: {resp.text[:200]}"
         except Exception as e:
@@ -828,7 +841,7 @@ def test_gemini():
     return jsonify({
         "key_count": len(keys),
         "results": results,
-        "gemini_model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        "gemini_model": model,
         "has_gemini_model": "GEMINI_MODEL" in os.environ,
         "gemini_model_raw": repr(os.environ.get("GEMINI_MODEL")),
     })
