@@ -803,21 +803,34 @@ def last_error():
 
 @app.route("/api/v1/test-gemini")
 def test_gemini():
-    from bot.signals.providers import call_gemini_http
-    import os, traceback
+    import os, traceback, json, httpx
     keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
     results = {}
-    for i, k in enumerate(keys):
+    for i, k in enumerate(keys[:2]):
+        key_label = f"key{i}"
+        model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={k}"
         try:
-            r = call_gemini_http(k, f"test#{i}", 'Reply JSON: {"ok": true}')
-            results[f"key{i}"] = "ok" if r else "failed"
+            payload = {
+                "contents": [{"parts": [{"text": "Reply JSON: {\"ok\": true}"}]}],
+                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400},
+            }
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(url, json=payload)
+                results[key_label] = f"HTTP {resp.status_code}"
+                if resp.status_code == 200:
+                    body = resp.json()
+                    results[key_label] = "ok"
+                else:
+                    results[key_label] = f"HTTP {resp.status_code}: {resp.text[:200]}"
         except Exception as e:
-            results[f"key{i}"] = str(e)
+            results[key_label] = f"EXC: {e}"
     return jsonify({
         "key_count": len(keys),
         "results": results,
-        "gemini_model": os.environ.get("GEMINI_MODEL", ""),
-        "env_set": bool(os.environ.get("GEMINI_API_KEYS", "")),
+        "gemini_model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        "has_gemini_model": "GEMINI_MODEL" in os.environ,
+        "gemini_model_raw": repr(os.environ.get("GEMINI_MODEL")),
     })
 
 
