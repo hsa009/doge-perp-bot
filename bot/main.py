@@ -723,6 +723,8 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
             logger.info("Reseeded enabled_models=%s", enabled_models)
         cfg = get_runtime_config()
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
+        if not groq_key:
+            groq_key = GROQ_API_KEY
         gemini_keys_str = ",".join(GEMINI_API_KEYS) or os.environ.get("GEMINI_API_KEYS", "")
         gemini_api_keys = [k.strip() for k in gemini_keys_str.split(",") if k.strip()]
         logger.info("Gemini keys loaded: %d from env=%s", len(gemini_api_keys), bool(os.environ.get("GEMINI_API_KEYS", "")))
@@ -841,30 +843,30 @@ def test_gemini():
 
 @app.route("/api/v1/test-groq")
 def test_groq():
-    import json, httpx
-    groq_key = redis.get_config("groq_api_key", GROQ_API_KEY) if redis.enabled else GROQ_API_KEY
-    results = {}
-    results["key_prefix"] = groq_key[:20] + "..." if groq_key else "EMPTY"
-    
-    payload = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [{"role": "user", "content": 'Reply JSON: {"direction": "long"}'}],
-        "temperature": 0.3,
-        "max_tokens": 300,
-    }
-    headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+    import json, os, httpx
+    groq_key = GROQ_API_KEY
     try:
+        groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
+    except Exception:
+        pass
+    results = dict(groq_key_prefix=(groq_key[:20] + "..." if groq_key else "EMPTY"))
+    try:
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": 'Reply JSON: {"direction": "long"}'}],
+            "temperature": 0.3,
+            "max_tokens": 300,
+        }
+        headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
         with httpx.Client(timeout=15) as client:
             resp = client.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
             results["http_status"] = resp.status_code
             if resp.status_code == 200:
-                body = resp.json()
-                content = body["choices"][0]["message"]["content"]
-                results["content"] = content[:100]
+                results["content"] = resp.json()["choices"][0]["message"]["content"][:100]
             else:
                 results["error"] = resp.text[:200]
     except Exception as e:
-        results["exc"] = str(e)
+        results["exc"] = f"{type(e).__name__}: {e}"
     return jsonify(results)
 
 
