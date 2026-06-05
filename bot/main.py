@@ -725,6 +725,7 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
         gemini_keys_str = redis.get_config("gemini_api_keys", ",".join(GEMINI_API_KEYS)) or os.environ.get("GEMINI_API_KEYS", "")
         gemini_api_keys = [k.strip() for k in gemini_keys_str.split(",") if k.strip()]
+        logger.info("Gemini keys loaded: %d from env=%s", len(gemini_api_keys), bool(os.environ.get("GEMINI_API_KEYS", "")))
 
         market_context = get_market_context(hl, coin)
 
@@ -763,6 +764,8 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
         signal["_debug_redis_enabled"] = enabled_models
         signal["_debug_call"] = _signal_call_count
         signal["_debug_interval"] = AI_LOOP_INTERVAL
+        signal["_debug_gemini_count"] = len(gemini_api_keys)
+        signal["_debug_gemini_str"] = gemini_keys_str[:50] if gemini_keys_str else "empty"
         details = signal.pop("model_details", [])
         signal["model_details"] = details
         signal["timestamp"] = time.time()
