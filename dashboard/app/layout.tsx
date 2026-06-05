@@ -20,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <div className="flex gap-4 text-sm text-zinc-400">
                 <a href="/" className="hover:text-white transition-colors">Dashboard</a>
                 <a href="/trades" className="hover:text-white transition-colors">Trades</a>
+                <a href="/ai-votes" className="hover:text-white transition-colors">AI Votes</a>
                 <a href="/logs" className="hover:text-white transition-colors">Logs</a>
               </div>
             </div>

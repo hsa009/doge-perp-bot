@@ -1,12 +1,16 @@
 import json
+import uuid
 import time
+import random
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 import pandas as pd
+from google import genai
+from google.genai import types
 
-from bot.config import AI_MODELS, GROQ_API_KEY, GEMINI_API_KEY
+from bot.config import AI_MODELS, GROQ_API_KEY, GEMINI_API_KEY, GEMINI_API_KEYS, GEMINI_MODEL
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
@@ -144,8 +148,15 @@ Market Context:
     wait_rule = "\n- WAIT if trend is unclear or volatility too high" if allow_wait else ""
     direction_enum = '"long"|"short"|"wait"' if allow_wait else '"long"|"short"'
 
-    return f"""You are a {coin} perpetual futures analyst. Analyze this market data and decide LONG, SHORT, or WAIT.
+    return f"""You are a {coin} perpetual futures analyst. Analyze the technical data AND perform internet research to decide LONG, SHORT, or WAIT.
 
+=== INTERNET RESEARCH ===
+- Search for recent crypto news, specifically about {coin}
+- Check recent macroeconomic news that could affect crypto markets
+- Assess overall market sentiment (fear/greed, social media trends, large holder activity)
+- Look for any catalysts or events relevant to {coin}
+
+=== TECHNICAL ANALYSIS ===
 Current price: ${i['close']:.5f}
 24h range: ${i['low']:.5f} - ${i['high']:.5f}
 Trend (EMA 9/21/50): {trend}
@@ -161,12 +172,16 @@ Trade config:
 - Position: ${trade_amount} margin @ {leverage}x = ${notional:.0f} notional
 - Target profit: ${tp_usd} ({tp_pct:.2f}% move needed)
 - Stop loss: ${sl_usd} ({sl_pct:.2f}% adverse move)
-- Only enter if the market can realistically move {tp_pct:.2f}% in your direction{wait_rule}
+
+Analysis checklist:
+- Trend direction and strength (EMA alignment, ADX)
+- Momentum (RSI, MACD histogram direction)
+- Volume confirmation
+- Support/resistance from Bollinger Bands
+- ATR for volatility assessment
+- Internet research: news, macro, sentiment, catalysts
+- Overall risk/reward for a {tp_pct:.2f}% target vs {sl_pct:.2f}% stop
 {history_block}
-Direction signals:
-- LONG if order book is bid-heavy, funding is negative (shorts paying), and price is trending up
-- SHORT if order book is ask-heavy, funding is positive (longs paying), and price is trending down
-- HOLD if signals are mixed or unclear
 Respond ONLY with valid JSON:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
@@ -205,43 +220,30 @@ def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key
         return None
 
 
-def call_gemini(key: str, model: str, prompt: str, timeout: int = 30, gemini_api_key: str | None = None) -> dict | None:
-    if not gemini_api_key:
-        gemini_api_key = GEMINI_API_KEY
-    if not gemini_api_key:
-        logger.warning(f"{key}: no Gemini API key configured")
-        return None
-
-    url = f"{GEMINI_BASE}/{model}:generateContent?key={gemini_api_key}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 8192,
-        },
-    }
+def call_gemini_sdk(api_key: str, key_label: str, prompt: str) -> dict | None:
     try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json=payload)
-            if resp.status_code != 200:
-                logger.warning(f"{key}: HTTP {resp.status_code} {resp.text[:300]}")
-                return None
-            body = resp.json()
-            candidates = body.get("candidates", [])
-            if not candidates:
-                logger.warning(f"{key}: no candidates in response")
-                return None
-            parts = candidates[0].get("content", {}).get("parts", [])
-            if not parts:
-                logger.warning(f"{key}: no parts in response")
-                return None
-            content = parts[0].get("text", "")
-            if not content:
-                logger.warning(f"{key}: empty text in response")
-                return None
-            return _parse_response(key, model, model, content)
+        client = genai.Client(api_key=api_key)
+        gen_config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            temperature=0.3,
+            max_output_tokens=400,
+        )
+        resp = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=gen_config,
+        )
+        content = resp.text.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+        return _parse_response(key_label, GEMINI_MODEL, key_label, content)
     except Exception as e:
-        logger.debug(f"{key}: {e}")
+        logger.debug(f"{key_label}: Gemini SDK call failed — {e}")
         return None
 
 
@@ -290,10 +292,11 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                    consecutive_waits: int = 0,
                    current_pnl: float | None = None,
                    market_context: dict | None = None,
-                   gemini_api_key: str | None = None) -> dict:
+                   gemini_api_keys: list[str] | None = None,
+                   db=None) -> dict:
     if ohlcv.empty or len(ohlcv) < 50:
         logger.warning("Not enough data for AI signal")
-        return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": []}
+        return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": [], "vote_tally": {}}
 
     if enabled_models is not None and not enabled_models:
         logger.warning("enabled_models is empty list — falling back to MODEL_KEYS")
@@ -304,7 +307,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     if not keys_to_run:
         logger.warning("No models enabled — returning wait")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "All models disabled", "model_details": [],
-                "_debug_enabled_models": enabled_models, "_debug_model_keys": MODEL_KEYS}
+                "_debug_enabled_models": enabled_models, "_debug_model_keys": MODEL_KEYS, "vote_tally": {}}
 
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
@@ -317,67 +320,74 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                           last_signal_direction, last_signal_reasoning, consecutive_waits, current_pnl,
                           market_context=market_context)
 
+    cycle_id = uuid.uuid4().hex[:12]
+    votes = {"long": 0, "short": 0, "wait": 0}
     details: list[dict] = []
+    gemini_keys = gemini_api_keys if gemini_api_keys is not None else GEMINI_API_KEYS
+
+    def _save_vote(entry: dict | None, voter_label: str, voter_type: str):
+        if entry:
+            votes[entry["direction"]] += 1
+            details.append(entry)
+        if db and db.enabled:
+            try:
+                db.client.table("ai_votes").insert({
+                    "cycle_id": cycle_id,
+                    "coin": coin,
+                    "voter": voter_label,
+                    "voter_type": voter_type,
+                    "direction": entry["direction"] if entry else None,
+                    "confidence": entry.get("confidence") if entry else None,
+                    "reasoning": (entry.get("reasoning", "")[:500] if entry else None),
+                    "error": None if entry else "call_failed",
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }).execute()
+            except Exception as e:
+                logger.debug(f"save_ai_vote error for {voter_label}: {e}")
+
     with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
         futures = {}
         for k in keys_to_run:
             futures[executor.submit(call_groq, k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)] = k
-
         for future in as_completed(futures):
             key = futures[future]
             try:
-                result = future.result()
-                if result:
-                    details.append(result)
+                _save_vote(future.result(), key, "groq")
             except Exception as e:
                 logger.warning(f"{key}: exception {e}")
 
+    for i, key in enumerate(gemini_keys):
+        if i > 0:
+            time.sleep(random.uniform(2, 5))
+        _save_vote(call_gemini_sdk(key, f"gemini#{i}", prompt), f"gemini#{i}", "gemini")
+
     if not details:
-        logger.warning("All models failed — returning wait")
-        return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt}
+        logger.warning("All voters failed — returning wait")
+        return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt, "vote_tally": dict(votes), "cycle_id": cycle_id}
 
-    directions = set(d["direction"] for d in details)
-    tiebreaker_used = False
-    round1_details: list[dict] = []
+    max_count = max(votes.values())
+    winners = [d for d, c in votes.items() if c == max_count]
 
-    if len(directions) > 1 and len(details) >= 2:
-        round1_details = list(details)
-        logger.info(f"Split vote {directions} — calling Gemini tiebreaker")
-        tiebreaker_prompt = build_tiebreaker_prompt(prompt, details, coin)
-        gemini_result = call_gemini("gemini", "gemini-2.0-flash", tiebreaker_prompt, 30, gemini_api_key)
-        if gemini_result:
-            details = [gemini_result]
-            tiebreaker_used = True
-            logger.info(f"Gemini tiebreaker: {gemini_result['direction']} ({gemini_result['confidence']:.2f})")
-        else:
-            logger.warning("Gemini tiebreaker failed — falling back to Groq aggregation")
-
-    votes = {"long": 0.0, "short": 0.0, "wait": 0.0}
-    for d in details:
-        votes[d["direction"]] += d["confidence"]
-
-    sorted_dirs = sorted(votes, key=lambda d: votes[d], reverse=True)
-    winner = sorted_dirs[0]
-    runner_up = sorted_dirs[1]
-    min_win_margin = 0.1 / max(len(keys_to_run), 1)
-
-    if not tiebreaker_used and len(details) >= 2 and votes[winner] - votes[runner_up] < min_win_margin and allow_wait:
+    if len(winners) > 1 and allow_wait:
         winner = "wait"
+    else:
+        winner = winners[0]
 
-    avg_conf = votes[winner] / max(len([d for d in details if d["direction"] == winner]), 1)
+    total_voters = len(details)
+    confidence = max_count / total_voters if total_voters > 0 else 0.0
 
     reasons = "; ".join(f"{d['name']}: {d['direction']} ({d['confidence']:.2f})" for d in details)
 
-    logger.info(f"AI vote: winner={winner} conf={avg_conf:.2f} models={len(details)} tiebreaker={tiebreaker_used}")
+    logger.info(f"Vote: winner={winner} conf={confidence:.2f} voters={total_voters} tally={dict(votes)} cycle={cycle_id}")
     return {
         "direction": winner,
-        "confidence": round(min(avg_conf, 0.95), 2),
+        "confidence": round(min(confidence, 0.95), 2),
         "regime": regime,
         "reasoning": reasons,
         "prompt": prompt,
         "model_details": details,
-        "tiebreaker_used": tiebreaker_used,
-        "round1_details": round1_details if tiebreaker_used else [],
+        "vote_tally": dict(votes),
+        "cycle_id": cycle_id,
     }
 
 
