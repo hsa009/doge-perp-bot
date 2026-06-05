@@ -19,6 +19,7 @@ from bot.config import (
     AI_LOOP_INTERVAL,
     GROQ_API_KEY,
     GEMINI_API_KEY,
+    GEMINI_API_KEYS,
     ACTIVE_ASSET,
 )
 from bot.hyperliquid_client import HyperliquidClient
@@ -722,7 +723,8 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
             logger.info("Reseeded enabled_models=%s", enabled_models)
         cfg = get_runtime_config()
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
-        gemini_key = redis.get_config("gemini_api_key", GEMINI_API_KEY)
+        gemini_keys_str = redis.get_config("gemini_api_keys", ",".join(GEMINI_API_KEYS)) or os.environ.get("GEMINI_API_KEYS", "")
+        gemini_api_keys = [k.strip() for k in gemini_keys_str.split(",") if k.strip()]
 
         market_context = get_market_context(hl, coin)
 
@@ -754,7 +756,8 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
             consecutive_waits=c_waits,
             current_pnl=current_pnl,
             market_context=market_context,
-            gemini_api_key=gemini_key,
+            gemini_api_keys=gemini_api_keys,
+            db=db,
         )
 
         signal["_debug_redis_enabled"] = enabled_models
@@ -835,7 +838,7 @@ def seed_redis_config():
         "max_daily_loss": str(MAX_DAILY_LOSS_USD),
         "max_daily_loss_enabled": "1",
         "groq_api_key": GROQ_API_KEY,
-        "gemini_api_key": GEMINI_API_KEY,
+        "gemini_api_keys": ",".join(GEMINI_API_KEYS),
         "active_asset": ACTIVE_ASSET,
     }
     for key, val in defaults.items():

@@ -47,6 +47,11 @@ class Database:
             return
         return self.client.table("ai_signals").insert(signal_data).execute()
 
+    def save_ai_vote(self, vote_data: dict):
+        if not self.enabled:
+            return
+        return self.client.table("ai_votes").insert(vote_data).execute()
+
     def log(self, level: str, message: str):
         if not self.enabled:
             return

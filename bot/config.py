@@ -29,6 +29,8 @@ AI_LOOP_INTERVAL = int(os.environ.get("AI_LOOP_INTERVAL", "600"))
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEYS = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 ACTIVE_ASSET = os.environ.get("ACTIVE_ASSET", "DOGE")
 
