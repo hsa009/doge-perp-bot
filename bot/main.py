@@ -808,10 +808,6 @@ def test_gemini():
     results = {}
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
     
-    from bot.config import GEMINI_MODEL as CFG_MODEL
-    results["_config_model"] = CFG_MODEL
-    results["_config_model_repr"] = repr(CFG_MODEL)
-    
     for i, k in enumerate(keys[:2]):
         key_label = f"key{i}"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={k}"
@@ -840,10 +836,41 @@ def test_gemini():
     return jsonify({
         "key_count": len(keys),
         "results": results,
-        "gemini_model": model,
-        "has_gemini_model": "GEMINI_MODEL" in os.environ,
-        "gemini_model_raw": repr(os.environ.get("GEMINI_MODEL")),
+        "model": model,
     })
+
+@app.route("/api/v1/test-groq")
+def test_groq():
+    import httpx
+    from bot.config import GROQ_API_KEY
+    from bot.redis_client import redis
+    from bot.signals.providers import GROQ_BASE
+    results = {}
+    redis_key = redis.get_config("groq_api_key", GROQ_API_KEY) if redis.enabled else GROQ_API_KEY
+    results["redis_key"] = redis_key[:20] + "..."
+    results["env_key"] = GROQ_API_KEY[:20] + "..."
+    results["redis_enabled"] = redis.enabled
+    
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": 'Reply JSON: {"direction": "long", "confidence": 0.8}'}],
+        "temperature": 0.3,
+        "max_tokens": 300,
+    }
+    headers = {"Authorization": f"Bearer {redis_key}", "Content-Type": "application/json"}
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.post(GROQ_BASE, json=payload, headers=headers)
+            results["http_status"] = resp.status_code
+            if resp.status_code == 200:
+                body = resp.json()
+                content = body["choices"][0]["message"]["content"]
+                results["content"] = content[:100]
+            else:
+                results["error"] = resp.text[:200]
+    except Exception as e:
+        results["exc"] = str(e)
+    return jsonify(results)
 
 
 def ai_loop():
