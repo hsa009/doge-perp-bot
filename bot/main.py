@@ -902,7 +902,8 @@ def init_bot():
     t2.start()
 
 
-init_bot()
+t_init = threading.Thread(target=init_bot, daemon=True)
+t_init.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860)

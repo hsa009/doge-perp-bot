@@ -11,6 +11,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 7860
 
-COPY start.sh .
-RUN chmod +x start.sh
-CMD ["./start.sh"]
+CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "1", "--threads", "2", "--error-logfile", "-", "--access-logfile", "-", "bot.main:app"]
