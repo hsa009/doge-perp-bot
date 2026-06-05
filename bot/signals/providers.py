@@ -240,24 +240,27 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
             resp = client.post(url, json=payload)
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
-                return None
+                return {"_error": f"HTTP_{resp.status_code}"}
             body = resp.json()
             candidates = body.get("candidates", [])
             if not candidates:
                 logger.warning(f"{key_label}: no candidates")
-                return None
+                return {"_error": "no_candidates"}
             c = candidates[0]
             finish = c.get("finishReason", "unknown")
             parts = c.get("content", {}).get("parts", [])
             if not parts or not parts[0].get("text", ""):
                 logger.warning(f"{key_label}: no text finishReason={finish}")
-                return None
+                return {"_error": f"no_text_{finish}"}
             content = parts[0]["text"]
             content = _extract_json(content)
-            return _parse_response(key_label, GEMINI_MODEL, key_label, content)
+            parsed = _parse_response(key_label, GEMINI_MODEL, key_label, content)
+            if parsed is None:
+                return {"_error": "parse_failed"}
+            return parsed
     except Exception as e:
         logger.warning(f"{key_label}: Gemini HTTP call failed — {e}")
-        return None
+        return {"_error": f"EXC_{e}"}
 
 
 def _extract_json(text: str) -> str:
@@ -358,7 +361,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     gemini_keys = gemini_api_keys if gemini_api_keys is not None else GEMINI_API_KEYS
 
     def _save_vote(entry: dict | None, voter_label: str, voter_type: str):
-        if entry:
+        if entry and "_error" not in entry:
             votes[entry["direction"]] += 1
             details.append(entry)
         if db and db.enabled:
@@ -397,7 +400,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
         if i > 0:
             time.sleep(random.uniform(2, 5))
         result = call_gemini_http(key, f"gemini#{i}", prompt)
-        _debug_calls[f"gemini#{i}"] = "ok" if result else "returned_none"
+        _debug_calls[f"gemini#{i}"] = result.get("_error", "ok") if isinstance(result, dict) else ("ok" if result else "returned_none")
         _save_vote(result, f"gemini#{i}", "gemini")
 
     if not details:
