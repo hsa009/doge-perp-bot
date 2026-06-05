@@ -364,6 +364,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             except Exception as e:
                 logger.debug(f"save_ai_vote error for {voter_label}: {e}")
 
+    _debug_calls: dict[str, str] = {}
+
     with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
         futures = {}
         for k in keys_to_run:
@@ -371,18 +373,23 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
         for future in as_completed(futures):
             key = futures[future]
             try:
-                _save_vote(future.result(), key, "groq")
+                result = future.result()
+                _debug_calls[f"groq_{key}"] = "ok" if result else "returned_none"
+                _save_vote(result, key, "groq")
             except Exception as e:
+                _debug_calls[f"groq_{key}"] = f"EXC: {e}"
                 logger.warning(f"{key}: exception {e}")
 
     for i, key in enumerate(gemini_keys):
         if i > 0:
             time.sleep(random.uniform(2, 5))
-        _save_vote(call_gemini_http(key, f"gemini#{i}", prompt), f"gemini#{i}", "gemini")
+        result = call_gemini_http(key, f"gemini#{i}", prompt)
+        _debug_calls[f"gemini#{i}"] = "ok" if result else "returned_none"
+        _save_vote(result, f"gemini#{i}", "gemini")
 
     if not details:
         logger.warning("All voters failed — returning wait")
-        return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt, "vote_tally": dict(votes), "cycle_id": cycle_id}
+        return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt, "vote_tally": dict(votes), "cycle_id": cycle_id, "_debug_calls": _debug_calls}
 
     max_count = max(votes.values())
     winners = [d for d, c in votes.items() if c == max_count]
