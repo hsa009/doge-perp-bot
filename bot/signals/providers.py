@@ -253,10 +253,10 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
                 logger.warning(f"{key_label}: no text finishReason={finish}")
                 return {"_error": f"no_text_{finish}"}
             content = parts[0]["text"]
-            content = _extract_json(content)
-            parsed = _parse_response(key_label, GEMINI_MODEL, key_label, content)
+            extracted = _extract_json(content)
+            parsed = _parse_response(key_label, GEMINI_MODEL, key_label, extracted)
             if parsed is None:
-                return {"_error": "parse_failed"}
+                return {"_error": f"parse_failed text={repr(content[:200])}"}
             return parsed
     except Exception as e:
         logger.warning(f"{key_label}: Gemini HTTP call failed — {e}")
