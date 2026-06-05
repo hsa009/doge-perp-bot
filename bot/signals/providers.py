@@ -228,8 +228,8 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
             "temperature": 0.3,
             "maxOutputTokens": 400,
         },
-
     }
+    logger.info(f"{key_label}: calling Gemini model={GEMINI_MODEL!r} url_suffix={GEMINI_MODEL}")
     try:
         with httpx.Client(timeout=60) as client:
             resp = client.post(url, json=payload)
@@ -239,11 +239,12 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
             body = resp.json()
             candidates = body.get("candidates", [])
             if not candidates:
-                logger.warning(f"{key_label}: no candidates")
+                logger.warning(f"{key_label}: no candidates — full response: {json.dumps(body)[:200]}")
                 return None
             parts = candidates[0].get("content", {}).get("parts", [])
             if not parts:
-                logger.warning(f"{key_label}: no parts")
+                finish = candidates[0].get("finishReason", "unknown")
+                logger.warning(f"{key_label}: no parts finishReason={finish}")
                 return None
             content = parts[0].get("text", "")
             if not content:
@@ -256,6 +257,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
             if content.endswith("```"):
                 content = content[:-3]
             content = content.strip()
+            logger.info(f"{key_label}: got response: {content[:100]}")
             return _parse_response(key_label, GEMINI_MODEL, key_label, content)
     except Exception as e:
         logger.warning(f"{key_label}: Gemini HTTP call failed — {e}")
