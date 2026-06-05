@@ -267,9 +267,21 @@ def _extract_json(text: str) -> str:
     if idx == -1:
         return text
     text = text[idx:]
-    depth, end = 0, 0
+    depth = 0
+    in_string = False
+    escaped = False
+    end = 0
     for i, ch in enumerate(text):
-        if ch == "{":
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "{":
             depth += 1
         elif ch == "}":
             depth -= 1
