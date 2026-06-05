@@ -226,7 +226,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 400,
+            "maxOutputTokens": 800,
         },
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
