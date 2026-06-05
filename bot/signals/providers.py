@@ -7,8 +7,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 import pandas as pd
-from google import genai
-from google.genai import types
 
 from bot.config import AI_MODELS, GROQ_API_KEY, GEMINI_API_KEY, GEMINI_API_KEYS, GEMINI_MODEL
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
@@ -220,30 +218,47 @@ def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key
         return None
 
 
-def call_gemini_sdk(api_key: str, key_label: str, prompt: str) -> dict | None:
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+
+def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
+    url = f"{GEMINI_BASE}/{GEMINI_MODEL}:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 400,
+        },
+        "tools": [{"googleSearch": {}}],
+    }
     try:
-        client = genai.Client(api_key=api_key)
-        gen_config = types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-            temperature=0.3,
-            max_output_tokens=400,
-        )
-        resp = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=gen_config,
-        )
-        content = resp.text.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-        elif content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
-        return _parse_response(key_label, GEMINI_MODEL, key_label, content)
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
+                return None
+            body = resp.json()
+            candidates = body.get("candidates", [])
+            if not candidates:
+                logger.warning(f"{key_label}: no candidates")
+                return None
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                logger.warning(f"{key_label}: no parts")
+                return None
+            content = parts[0].get("text", "")
+            if not content:
+                logger.warning(f"{key_label}: empty text")
+                return None
+            if content.startswith("```json"):
+                content = content[7:]
+            elif content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            return _parse_response(key_label, GEMINI_MODEL, key_label, content)
     except Exception as e:
-        logger.debug(f"{key_label}: Gemini SDK call failed — {e}")
+        logger.debug(f"{key_label}: Gemini HTTP call failed — {e}")
         return None
 
 
@@ -359,7 +374,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     for i, key in enumerate(gemini_keys):
         if i > 0:
             time.sleep(random.uniform(2, 5))
-        _save_vote(call_gemini_sdk(key, f"gemini#{i}", prompt), f"gemini#{i}", "gemini")
+        _save_vote(call_gemini_http(key, f"gemini#{i}", prompt), f"gemini#{i}", "gemini")
 
     if not details:
         logger.warning("All voters failed — returning wait")
