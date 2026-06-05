@@ -806,35 +806,68 @@ def last_error():
 @app.route("/api/v1/test-gemini")
 def test_gemini():
     import os, json, httpx
+    from bot.signals.providers import _extract_json, _parse_response, GEMINI_MODEL
     keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
     results = {}
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+    
+    trade_prompt = """You are a SOL perpetual futures analyst. Analyze the technical data to decide LONG, SHORT, or WAIT.
+=== TECHNICAL ANALYSIS ===
+Current price: $63.96500
+Trend (EMA 9/21/50): bearish
+RSI(14): 36.9
+MACD histogram: 0.008691
+ADX(14): 20.5
+ATR(14): $0.92300
+Market regime: RANGING
+Respond ONLY with valid JSON:
+{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}"""
     
     for i, k in enumerate(keys[:2]):
         key_label = f"key{i}"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={k}"
         try:
             payload = {
-                "contents": [{"parts": [{"text": 'Reply JSON: {"ok": true}'}]}],
+                "contents": [{"parts": [{"text": trade_prompt}]}],
                 "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400},
+                "safetySettings": [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                ],
             }
             with httpx.Client(timeout=30) as client:
                 resp = client.post(url, json=payload)
+                r = {"http": resp.status_code}
                 if resp.status_code == 200:
                     body = resp.json()
                     candidates = body.get("candidates", [])
                     if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
+                        c = candidates[0]
+                        r["finish"] = c.get("finishReason")
+                        parts = c.get("content", {}).get("parts", [])
                         if parts:
-                            results[key_label] = f"ok text={parts[0].get('text','')[:50]}"
+                            raw = parts[0].get("text", "")
+                            r["raw_preview"] = raw[:300]
+                            ext = _extract_json(raw)
+                            r["extracted_preview"] = ext[:300]
+                            p = _parse_response(key_label, model, "test", ext)
+                            if p:
+                                r["parsed_ok"] = True
+                                r["direction"] = p["direction"]
+                            else:
+                                r["parsed_ok"] = False
+                                r["parse_error"] = "returned_none"
                         else:
-                            results[key_label] = f"no_parts finish={candidates[0].get('finishReason')}"
+                            r["no_parts"] = True
                     else:
-                        results[key_label] = "no_candidates"
+                        r["no_candidates"] = True
                 else:
-                    results[key_label] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    r["error"] = resp.text[:200]
+                results[key_label] = r
         except Exception as e:
-            results[key_label] = f"EXC: {e}"
+            results[key_label] = {"exc": str(e)}
     return jsonify({
         "key_count": len(keys),
         "results": results,
