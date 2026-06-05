@@ -231,7 +231,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         "tools": [{"googleSearch": {}}],
     }
     try:
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=60) as client:
             resp = client.post(url, json=payload)
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
@@ -258,7 +258,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
             content = content.strip()
             return _parse_response(key_label, GEMINI_MODEL, key_label, content)
     except Exception as e:
-        logger.debug(f"{key_label}: Gemini HTTP call failed — {e}")
+        logger.warning(f"{key_label}: Gemini HTTP call failed — {e}")
         return None
 
 
