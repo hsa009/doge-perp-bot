@@ -801,6 +801,25 @@ def last_error():
         "timestamp": _last_error.timestamp,
     })
 
+@app.route("/api/v1/test-gemini")
+def test_gemini():
+    from bot.signals.providers import call_gemini_http
+    import os, traceback
+    keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
+    results = {}
+    for i, k in enumerate(keys):
+        try:
+            r = call_gemini_http(k, f"test#{i}", 'Reply JSON: {"ok": true}')
+            results[f"key{i}"] = "ok" if r else "failed"
+        except Exception as e:
+            results[f"key{i}"] = str(e)
+    return jsonify({
+        "key_count": len(keys),
+        "results": results,
+        "gemini_model": os.environ.get("GEMINI_MODEL", ""),
+        "env_set": bool(os.environ.get("GEMINI_API_KEYS", "")),
+    })
+
 
 def ai_loop():
     logger.info("AI engine started")
