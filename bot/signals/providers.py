@@ -305,6 +305,7 @@ def _clean_json(s: str) -> str:
 
 
 def _parse_response(key: str, model: str, name: str, content: str) -> dict | None:
+    content = content.strip()
     try:
         parsed = json.loads(content)
         if parsed.get("direction") not in ("long", "short", "wait"):
@@ -318,9 +319,30 @@ def _parse_response(key: str, model: str, name: str, content: str) -> dict | Non
             "confidence": float(parsed.get("confidence", 0.5)),
             "reasoning": parsed.get("reasoning", ""),
         }
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.warning(f"{key}: failed to parse response: {e}")
-        return None
+    except (json.JSONDecodeError, KeyError):
+        pass
+
+    # fallback: try to extract direction from text
+    import re
+    m = re.search(r'"direction"\s*:\s*"(long|short|wait)"', content)
+    if m:
+        direction = m.group(1)
+        m2 = re.search(r'"confidence"\s*:\s*([\d.]+)', content)
+        confidence = float(m2.group(1)) if m2 else 0.5
+        m3 = re.search(r'"reasoning"\s*:\s*"(.+?)"(?:\s*[,}])', content, re.DOTALL)
+        reasoning = m3.group(1)[:200] if m3 else ""
+        logger.warning(f"{key}: JSON parse failed, extracted direction={direction}")
+        return {
+            "key": key,
+            "model": model,
+            "name": name,
+            "direction": direction,
+            "confidence": confidence,
+            "reasoning": reasoning,
+        }
+
+    logger.warning(f"{key}: failed to parse response")
+    return None
 
 
 def build_tiebreaker_prompt(original_prompt: str, all_details: list[dict], coin: str = "DOGE") -> str:
