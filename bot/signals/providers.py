@@ -279,7 +279,18 @@ def _extract_json(text: str) -> str:
                 break
     if end == 0:
         return text
-    return text[:end]
+    return _clean_json(text[:end])
+
+
+def _clean_json(s: str) -> str:
+    s = s.strip()
+    if s.endswith("```"):
+        s = s[:-3]
+    s = s.strip()
+    import re
+    s = re.sub(r",\s*}", "}", s)
+    s = re.sub(r",\s*]", "]", s)
+    return s
 
 
 def _parse_response(key: str, model: str, name: str, content: str) -> dict | None:
