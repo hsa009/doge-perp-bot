@@ -803,7 +803,7 @@ def last_error():
 
 @app.route("/api/v1/test-gemini")
 def test_gemini():
-    import os, traceback, json, httpx
+    import os, json, httpx
     keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
     results = {}
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
@@ -841,26 +841,21 @@ def test_gemini():
 
 @app.route("/api/v1/test-groq")
 def test_groq():
-    import httpx
-    from bot.config import GROQ_API_KEY
-    from bot.redis_client import redis
-    from bot.signals.providers import GROQ_BASE
+    import json, httpx
+    groq_key = redis.get_config("groq_api_key", GROQ_API_KEY) if redis.enabled else GROQ_API_KEY
     results = {}
-    redis_key = redis.get_config("groq_api_key", GROQ_API_KEY) if redis.enabled else GROQ_API_KEY
-    results["redis_key"] = redis_key[:20] + "..."
-    results["env_key"] = GROQ_API_KEY[:20] + "..."
-    results["redis_enabled"] = redis.enabled
+    results["key_prefix"] = groq_key[:20] + "..." if groq_key else "EMPTY"
     
     payload = {
         "model": "llama-3.3-70b-versatile",
-        "messages": [{"role": "user", "content": 'Reply JSON: {"direction": "long", "confidence": 0.8}'}],
+        "messages": [{"role": "user", "content": 'Reply JSON: {"direction": "long"}'}],
         "temperature": 0.3,
         "max_tokens": 300,
     }
-    headers = {"Authorization": f"Bearer {redis_key}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
     try:
         with httpx.Client(timeout=15) as client:
-            resp = client.post(GROQ_BASE, json=payload, headers=headers)
+            resp = client.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
             results["http_status"] = resp.status_code
             if resp.status_code == 200:
                 body = resp.json()
