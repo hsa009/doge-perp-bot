@@ -253,17 +253,30 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
                 logger.warning(f"{key_label}: no text finishReason={finish}")
                 return None
             content = parts[0]["text"]
-            if content.startswith("```json"):
-                content = content[7:]
-            elif content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            content = _extract_json(content)
             return _parse_response(key_label, GEMINI_MODEL, key_label, content)
     except Exception as e:
         logger.warning(f"{key_label}: Gemini HTTP call failed — {e}")
         return None
+
+
+def _extract_json(text: str) -> str:
+    idx = text.find("{")
+    if idx == -1:
+        return text
+    text = text[idx:]
+    depth, end = 0, 0
+    for i, ch in enumerate(text):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end == 0:
+        return text
+    return text[:end]
 
 
 def _parse_response(key: str, model: str, name: str, content: str) -> dict | None:
