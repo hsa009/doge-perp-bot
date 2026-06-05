@@ -146,13 +146,7 @@ Market Context:
     wait_rule = "\n- WAIT if trend is unclear or volatility too high" if allow_wait else ""
     direction_enum = '"long"|"short"|"wait"' if allow_wait else '"long"|"short"'
 
-    return f"""You are a {coin} perpetual futures analyst. Analyze the technical data AND perform internet research to decide LONG, SHORT, or WAIT.
-
-=== INTERNET RESEARCH ===
-- Search for recent crypto news, specifically about {coin}
-- Check recent macroeconomic news that could affect crypto markets
-- Assess overall market sentiment (fear/greed, social media trends, large holder activity)
-- Look for any catalysts or events relevant to {coin}
+    return f"""You are a {coin} perpetual futures analyst. Analyze the technical data to decide LONG, SHORT, or WAIT.
 
 === TECHNICAL ANALYSIS ===
 Current price: ${i['close']:.5f}
@@ -177,10 +171,9 @@ Analysis checklist:
 - Volume confirmation
 - Support/resistance from Bollinger Bands
 - ATR for volatility assessment
-- Internet research: news, macro, sentiment, catalysts
 - Overall risk/reward for a {tp_pct:.2f}% target vs {sl_pct:.2f}% stop
 {history_block}
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON. Keep reasoning under 50 words:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
@@ -226,7 +219,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 800,
+            "maxOutputTokens": 1500,
         },
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
