@@ -766,7 +766,6 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
         signal["_debug_interval"] = AI_LOOP_INTERVAL
         signal["_debug_gemini_count"] = len(gemini_api_keys)
         signal["_debug_gemini_str"] = gemini_keys_str[:50] if gemini_keys_str else "empty"
-        signal["_debug_gemini_model"] = GEMINI_MODEL
         details = signal.pop("model_details", [])
         signal["model_details"] = details
         signal["timestamp"] = time.time()
