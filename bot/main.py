@@ -723,7 +723,7 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
             logger.info("Reseeded enabled_models=%s", enabled_models)
         cfg = get_runtime_config()
         groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
-        gemini_keys_str = redis.get_config("gemini_api_keys", ",".join(GEMINI_API_KEYS)) or os.environ.get("GEMINI_API_KEYS", "")
+        gemini_keys_str = ",".join(GEMINI_API_KEYS) or os.environ.get("GEMINI_API_KEYS", "")
         gemini_api_keys = [k.strip() for k in gemini_keys_str.split(",") if k.strip()]
         logger.info("Gemini keys loaded: %d from env=%s", len(gemini_api_keys), bool(os.environ.get("GEMINI_API_KEYS", "")))
 
@@ -846,7 +846,7 @@ def seed_redis_config():
     }
     for key, val in defaults.items():
         existing = redis.get_config(key, "")
-        if not existing:
+        if not existing or key in ("groq_api_key", "gemini_api_keys"):
             redis.set_config(key, val)
             logger.info(f"Seeded Redis config:{key} = {val}")
 
