@@ -228,7 +228,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
             "temperature": 0.3,
             "maxOutputTokens": 400,
         },
-        "tools": [{"googleSearch": {}}],
+
     }
     try:
         with httpx.Client(timeout=60) as client:
