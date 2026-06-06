@@ -422,7 +422,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                 }
                 db.client.table("ai_votes").insert(data).execute()
             except Exception as e:
-                logger.debug(f"save_ai_vote error for {voter_label}: {e}")
+                logger.warning(f"save_ai_vote error for {voter_label}: {e}")
 
     _debug_calls: dict[str, str] = {}
 
