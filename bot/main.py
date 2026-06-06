@@ -819,6 +819,31 @@ def voter_health():
         logger.warning(f"voter-health error: {e}")
         return jsonify({"error": str(e), "db_enabled": db.enabled}), 500
 
+
+@app.route("/api/v1/bot/test-db")
+def test_db():
+    """Test DB connectivity and ai_votes table."""
+    results = {"db_enabled": db.enabled, "tests": []}
+    if not db.enabled:
+        return jsonify(results)
+    try:
+        # Test query
+        result = db.client.table("ai_votes").select("count", count="exact").execute()
+        results["tests"].append({"name": "count", "ok": True, "count": result.count})
+    except Exception as e:
+        results["tests"].append({"name": "count", "ok": False, "error": str(e)})
+    try:
+        # Test insert and delete
+        test_data = {"cycle_id": "__test__", "coin": "TEST", "voter": "test", "direction": "test", "confidence": 0.5, "error": None, "created_at": "2025-01-01T00:00:00Z"}
+        ins = db.client.table("ai_votes").insert(test_data).execute()
+        results["tests"].append({"name": "insert", "ok": True, "id": ins.data[0].get("id") if ins.data else None})
+        # Clean up
+        db.client.table("ai_votes").delete().eq("cycle_id", "__test__").execute()
+        results["tests"].append({"name": "delete", "ok": True})
+    except Exception as e:
+        results["tests"].append({"name": "insert", "ok": False, "error": str(e)})
+    return jsonify(results)
+
 @app.route("/api/v1/test-gemini")
 def test_gemini():
     import os, json, httpx
