@@ -410,17 +410,17 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             details.append(entry)
         if db and db.enabled:
             try:
-                db.client.table("ai_votes").insert({
+                data = {
                     "cycle_id": cycle_id,
                     "coin": coin,
                     "voter": voter_label,
-                    "voter_type": voter_type,
                     "direction": entry["direction"] if entry else None,
                     "confidence": entry.get("confidence") if entry else None,
                     "reasoning": (entry.get("reasoning", "")[:500] if entry else None),
                     "error": None if entry else "call_failed",
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                }).execute()
+                }
+                db.client.table("ai_votes").insert(data).execute()
             except Exception as e:
                 logger.debug(f"save_ai_vote error for {voter_label}: {e}")
 
