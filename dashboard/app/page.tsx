@@ -8,6 +8,7 @@ import SettingsPanel from "../components/SettingsPanel"
 import AiModelsCard from "../components/AiModelsCard"
 import TradingChart from "../components/TradingChart"
 import ProfitCalculator from "../components/ProfitCalculator"
+import VoterHealth from "../components/VoterHealth"
 
 interface BotStatus {
   running: boolean
@@ -235,6 +236,7 @@ export default function Dashboard() {
       />
 
       <AiModelsCard />
+      <VoterHealth />
     </div>
   )
 }
