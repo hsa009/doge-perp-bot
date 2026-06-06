@@ -276,6 +276,7 @@ def bot_settings():
             return jsonify({"ok": False, "error": "No body"}), 400
         for key, value in body.items():
             redis.set_config(key, str(value))
+        invalidate_config_cache()
         logger.info(f"Settings updated: {body}")
         return jsonify({"ok": True})
     except Exception as e:
@@ -367,6 +368,115 @@ def get_runtime_config() -> dict:
         "max_daily_loss_enabled": redis.get_config("max_daily_loss_enabled", "1"),
         "active_asset": redis.get_config("active_asset", ACTIVE_ASSET),
     }
+
+
+# ---------------------------------------------------------------------------
+# Sniper (V3) helpers — local cache to keep the 300ms loop off Upstash/HL.
+# ---------------------------------------------------------------------------
+# These wrap the existing get_runtime_config() and per-call Redis/HL reads.
+# They are intentionally additive: nothing else in the file is replaced.
+
+_config_cache: dict | None = None
+_config_cache_ts: float = 0.0
+_config_cache_lock = threading.Lock()
+_CONFIG_CACHE_TTL = 2.0
+
+# Generic 1s-TTL cache for high-frequency sniper reads (emergency stop,
+# bot running, position). Maps cache-key -> (expiry_monotonic, value).
+_sniper_redis_cache: dict[str, tuple[float, object]] = {}
+
+
+def get_cached_runtime_config() -> dict:
+    """Return runtime config, refreshing from Redis at most once per 2 seconds.
+
+    The trading_loop polls every 300ms; calling get_runtime_config() on every
+    tick would issue 8 sequential Redis GETs per tick (~1,600 GETs/min). This
+    wrapper caps the cascade to 1 refresh per 2-second window, dropping it to
+    ~240 GETs/min while still honouring dashboard changes within 2 seconds.
+    """
+    global _config_cache, _config_cache_ts
+    now = time.monotonic()
+    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_CACHE_TTL:
+        return _config_cache
+    with _config_cache_lock:
+        # Double-check after acquiring lock to avoid duplicate reloads.
+        if _config_cache is not None and (time.monotonic() - _config_cache_ts) < _CONFIG_CACHE_TTL:
+            return _config_cache
+        _config_cache = get_runtime_config()
+        _config_cache_ts = time.monotonic()
+    return _config_cache
+
+
+def invalidate_config_cache() -> None:
+    """Force the next get_cached_runtime_config() call to re-read from Redis.
+
+    Called from bot_settings() so dashboard saves take effect immediately
+    instead of after up to 2 seconds of stale cached state.
+    """
+    global _config_cache, _config_cache_ts
+    with _config_cache_lock:
+        _config_cache = None
+        _config_cache_ts = 0.0
+
+
+def _sniper_redis_cached(key: str, loader):
+    """Generic 1s-TTL cache wrapper. `loader` is a zero-arg callable.
+
+    Used to throttle is_emergency_stop, is_bot_running, and get_position
+    to 1Hz so the 300ms sniper tick doesn't hammer Upstash/Hyperliquid.
+    A 1-second staleness window is acceptable for these control signals.
+    """
+    now = time.monotonic()
+    cached = _sniper_redis_cache.get(key)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    try:
+        value = loader()
+    except Exception:
+        # On error, return the previous value if we have one, else None.
+        return cached[1] if cached is not None else None
+    _sniper_redis_cache[key] = (now + 1.0, value)
+    return value
+
+
+def is_bias_fresh(signal: dict | None) -> bool:
+    """A signal/bias is fresh if it's present and younger than 2*AI_LOOP_INTERVAL.
+
+    If the AI engine freezes or rate-limits out, the sniper must safely stand
+    down rather than trade on decayed market assumptions.
+    """
+    if not signal:
+        return False
+    ts = signal.get("timestamp", 0) or 0
+    return (time.time() - ts) < (AI_LOOP_INTERVAL * 2)
+
+
+def compute_obi(coin: str) -> float | None:
+    """Top-3 L2 Order Book Imbalance: (bid_vol - ask_vol) / (bid_vol + ask_vol).
+
+    Returns a value in [-1.0, 1.0]. Positive = buy pressure, negative = sell.
+    Returns None on any error (book unavailable, empty, malformed). Caller
+    should treat None as "no signal this tick" and continue.
+
+    Distinct from market_data.get_market_context() which uses top-5 levels
+    for macro context. The sniper uses top-3 for hyper-local liquidity at
+    the touch — the most immediate book density to time a 10-cent entry.
+    """
+    try:
+        book = hl.info.l2_book(coin)
+        if not book or "levels" not in book:
+            return None
+        bids = book["levels"][0][:3]
+        asks = book["levels"][1][:3]
+        bid_vol = sum(float(b["sz"]) for b in bids)
+        ask_vol = sum(float(a["sz"]) for a in asks)
+        denom = bid_vol + ask_vol
+        if denom <= 0:
+            return None
+        return (bid_vol - ask_vol) / denom
+    except Exception as e:
+        logger.debug(f"compute_obi error for {coin}: {e}")
+        return None
 
 
 def _validate_trade_config(coin: str, direction: str) -> dict | None:
@@ -507,17 +617,21 @@ def close_position_in_db(coin: str = "DOGE"):
 
 def trading_loop():
     logger.info("Trading loop started")
+    # Per-thread local state for the 300ms sniper cadence. Closure-scoped on
+    # purpose: never module-global, so Flask request handlers can never read
+    # or mutate it. The 1s caches below are the only shared state.
+    _state = {"last_pos_check": 0.0, "local_pos_active": False}
     while True:
         try:
-            if redis.is_emergency_stop():
+            if _sniper_redis_cached("emergency_stop", redis.is_emergency_stop):
                 kill_switch()
                 break
 
-            if not redis.is_bot_running():
+            if not _sniper_redis_cached("bot_running", redis.is_bot_running):
                 time.sleep(10)
                 continue
 
-            cfg = get_runtime_config()
+            cfg = get_cached_runtime_config()
             coin = cfg.get("active_asset", "DOGE")
 
             # If a position exists for a different coin than active_asset, use the position's coin
@@ -616,6 +730,11 @@ def trading_loop():
                 time.sleep(10)
                 continue
 
+            if not is_bias_fresh(signal):
+                logger.warning(f"Stale macro bias: age={time.time() - signal.get('timestamp', 0):.0f}s > {AI_LOOP_INTERVAL * 2}s — sniper standing down")
+                time.sleep(10)
+                continue
+
             if signal["direction"] == "wait":
                 time.sleep(30)
                 continue
@@ -671,6 +790,23 @@ def trading_loop():
             if validated is None:
                 time.sleep(10)
                 continue
+
+            # V3 sniper: gate entry on top-3 L2 OBI ±0.65 aligned with macro bias.
+            # If OBI is unavailable (book error) or doesn't cross, 300ms tick and
+            # re-evaluate. When OBI fires, fall through to the existing open_trade
+            # + post-trade cooldown path — TP/SL math and execution are untouched.
+            obi = compute_obi(coin)
+            if obi is None:
+                time.sleep(0.3)
+                continue
+            if signal["direction"] == "long" and obi > 0.65:
+                logger.info(f"OBI trigger: long entry, obi={obi:.3f} > 0.65 (bias=long, coin={coin})")
+            elif signal["direction"] == "short" and obi < -0.65:
+                logger.info(f"OBI trigger: short entry, obi={obi:.3f} < -0.65 (bias=short, coin={coin})")
+            else:
+                time.sleep(0.3)
+                continue
+
             open_trade(signal, coin)
             time.sleep(10)
 
