@@ -99,7 +99,13 @@ def bot_debug():
     return jsonify({
         "MODEL_KEYS": MODEL_KEYS,
         "enabled_models": enabled,
-        "model_defs": defs,
+        "model_defs": defs or [],
+        "db_enabled": db.enabled,
+        "supabase_url_set": bool(os.environ.get("SUPABASE_URL")),
+        "supabase_key_set": bool(os.environ.get("SUPABASE_KEY")),
+        "gemini_keys_count": len(GEMINI_API_KEYS),
+        "gemini_keys_str": ",".join(GEMINI_API_KEYS)[:80] if GEMINI_API_KEYS else "EMPTY",
+        "ai_models": os.environ.get("AI_MODELS", "not set"),
     })
 
 
