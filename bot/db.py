@@ -104,21 +104,24 @@ class Database:
         if not self.enabled:
             return []
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        result = (
-            self.client.table("ai_votes")
-            .select("voter, voter_type, direction, error, created_at")
-            .eq("coin", coin)
-            .gte("created_at", cutoff)
-            .order("created_at", desc=True)
-            .execute()
-        )
+        try:
+            result = (
+                self.client.table("ai_votes")
+                .select("voter, direction, error, created_at")
+                .eq("coin", coin)
+                .gte("created_at", cutoff)
+                .order("created_at", desc=True)
+                .limit(limit * 20)
+                .execute()
+            )
+        except Exception:
+            return []
         voters: dict[str, dict] = {}
         for row in result.data:
             v = row["voter"]
             if v not in voters:
                 voters[v] = {
                     "voter": v,
-                    "voter_type": row.get("voter_type", ""),
                     "total_calls": 0,
                     "successful": 0,
                     "failed": 0,
