@@ -806,8 +806,12 @@ def last_error():
 @app.route("/api/v1/bot/voter-health")
 def voter_health():
     coin = get_runtime_config().get("active_asset", "DOGE")
-    health = db.get_voter_health(coin, limit=10)
-    return jsonify(health)
+    try:
+        health = db.get_voter_health(coin, limit=10)
+        return jsonify(health)
+    except Exception as e:
+        logger.warning(f"voter-health error: {e}")
+        return jsonify({"error": str(e), "db_enabled": db.enabled}), 500
 
 @app.route("/api/v1/test-gemini")
 def test_gemini():
