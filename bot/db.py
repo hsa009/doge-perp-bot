@@ -99,3 +99,41 @@ class Database:
                     wins += 1
         win_rate = wins / total if total > 0 else 0
         return {"total_pnl": total_pnl, "win_rate": win_rate, "total_trades": total}
+
+    def get_voter_health(self, coin: str, limit: int = 10) -> list[dict]:
+        if not self.enabled:
+            return []
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        result = (
+            self.client.table("ai_votes")
+            .select("voter, voter_type, direction, error, created_at")
+            .eq("coin", coin)
+            .gte("created_at", cutoff)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        voters: dict[str, dict] = {}
+        for row in result.data:
+            v = row["voter"]
+            if v not in voters:
+                voters[v] = {
+                    "voter": v,
+                    "voter_type": row.get("voter_type", ""),
+                    "total_calls": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "last_error": None,
+                    "last_success": None,
+                    "last_direction": None,
+                }
+            voters[v]["total_calls"] += 1
+            if row.get("error"):
+                voters[v]["failed"] += 1
+                if voters[v]["last_error"] is None:
+                    voters[v]["last_error"] = row["error"]
+            else:
+                voters[v]["successful"] += 1
+                if voters[v]["last_success"] is None:
+                    voters[v]["last_success"] = row.get("created_at")
+                    voters[v]["last_direction"] = row.get("direction")
+        return list(voters.values())

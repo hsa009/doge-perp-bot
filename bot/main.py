@@ -803,6 +803,12 @@ def last_error():
         "timestamp": _last_error.timestamp,
     })
 
+@app.route("/api/v1/bot/voter-health")
+def voter_health():
+    coin = get_runtime_config().get("active_asset", "DOGE")
+    health = db.get_voter_health(coin, limit=10)
+    return jsonify(health)
+
 @app.route("/api/v1/test-gemini")
 def test_gemini():
     import os, json, httpx
