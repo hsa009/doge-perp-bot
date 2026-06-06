@@ -405,19 +405,22 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     gemini_keys = gemini_api_keys if gemini_api_keys is not None else GEMINI_API_KEYS
 
     def _save_vote(entry: dict | None, voter_label: str, voter_type: str):
-        if entry and "_error" not in entry:
+        if entry and "_error" not in entry and entry.get("direction"):
             votes[entry["direction"]] += 1
             details.append(entry)
         if db and db.enabled:
             try:
+                safe_dir = entry.get("direction") if entry and isinstance(entry, dict) else None
+                safe_conf = entry.get("confidence") if entry and isinstance(entry, dict) else None
+                safe_reas = entry.get("reasoning", "")[:500] if entry and isinstance(entry, dict) else None
                 data = {
-                    "cycle_id": cycle_id,
+                    "cycle_id": str(uuid.uuid4()),
                     "coin": coin,
                     "voter": voter_label,
-                    "direction": entry["direction"] if entry else None,
-                    "confidence": entry.get("confidence") if entry else None,
-                    "reasoning": (entry.get("reasoning", "")[:500] if entry else None),
-                    "error": None if entry else "call_failed",
+                    "direction": safe_dir,
+                    "confidence": safe_conf,
+                    "reasoning": safe_reas,
+                    "error": None if safe_dir else "call_failed",
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
                 db.client.table("ai_votes").insert(data).execute()
