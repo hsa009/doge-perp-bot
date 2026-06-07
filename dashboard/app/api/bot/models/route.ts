@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server"
+import { botFetch } from "@/lib/bot-api"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-const BOT_API = process.env.BOT_API_URL || "https://ghaith1122331-doge-bot.hf.space"
-
 export async function GET() {
   try {
-    const resp = await fetch(`${BOT_API}/api/v1/bot/models`, {
+    const resp = await botFetch(`/api/v1/bot/models`, {
       signal: AbortSignal.timeout(15000),
-    })
+    } as RequestInit)
     const data = await resp.json()
     return NextResponse.json(data, {
       headers: {
@@ -26,12 +25,12 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const resp = await fetch(`${BOT_API}/api/v1/bot/models`, {
+    const resp = await botFetch(`/api/v1/bot/models`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15000),
-    })
+    } as RequestInit)
     const data = await resp.json()
     return NextResponse.json(data)
   } catch {
