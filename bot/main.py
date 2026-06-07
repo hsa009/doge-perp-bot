@@ -96,6 +96,9 @@ def bot_debug():
     from bot.signals.providers import MODEL_KEYS
     enabled = redis.get_enabled_models()
     defs = redis.get_model_defs()
+    sig = redis.get_current_signal()
+    sig_age = time.time() - sig.get("timestamp", 0) if sig else None
+    cfg_now = get_cached_runtime_config()
     return jsonify({
         "MODEL_KEYS": MODEL_KEYS,
         "enabled_models": enabled,
@@ -106,6 +109,17 @@ def bot_debug():
         "gemini_keys_count": len(GEMINI_API_KEYS),
         "gemini_keys_str": ",".join(GEMINI_API_KEYS)[:80] if GEMINI_API_KEYS else "EMPTY",
         "ai_models": os.environ.get("AI_MODELS", "not set"),
+        "sniper": {
+            "high_conf_bypass": _HIGH_CONF_OBI_BYPASS,
+            "min_confidence": cfg_now.get("min_confidence"),
+            "current_signal_direction": sig.get("direction") if sig else None,
+            "current_signal_confidence": sig.get("confidence") if sig else None,
+            "current_signal_forced": sig.get("_forced") if sig else None,
+            "current_signal_age_s": sig_age,
+            "would_bypass_high_conf": bool(sig and sig.get("confidence", 0) >= _HIGH_CONF_OBI_BYPASS),
+            "would_bypass_forced": bool(sig and sig.get("_forced")),
+            "voter_count": len(sig.get("model_details", [])) if sig else 0,
+        },
     })
 
 
