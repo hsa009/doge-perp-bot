@@ -119,6 +119,7 @@ def bot_debug():
             "would_bypass_high_conf": bool(sig and sig.get("confidence", 0) >= _HIGH_CONF_OBI_BYPASS),
             "would_bypass_forced": bool(sig and sig.get("_forced")),
             "voter_count": len(sig.get("model_details", [])) if sig else 0,
+            "last_error": redis.get_sniper_error(),
         },
     })
 
@@ -838,7 +839,20 @@ def trading_loop():
                     time.sleep(0.3)
                     continue
 
-            open_trade(signal, coin)
+            try:
+                _open_ok = open_trade(signal, coin)
+                if not _open_ok:
+                    logger.error(f"open_trade returned False for {signal['direction']} {coin} — check balance/min size/HL rate limit")
+                    try:
+                        redis.set_sniper_error(f"open_trade returned False at {time.strftime('%H:%M:%S')} for {signal['direction']} {coin} (conf={signal['confidence']:.2f})")
+                    except Exception:
+                        pass
+            except Exception as _ote:
+                logger.exception(f"open_trade raised: {_ote}")
+                try:
+                    redis.set_sniper_error(f"open_trade exception at {time.strftime('%H:%M:%S')}: {_ote}")
+                except Exception:
+                    pass
             time.sleep(10)
 
         except Exception as e:

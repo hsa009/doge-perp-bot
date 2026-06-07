@@ -127,6 +127,12 @@ class RedisClient:
         result = self._request("GET", "signal:consecutive_waits")
         return int(result) if result else 0
 
+    def set_sniper_error(self, msg: str):
+        self._request("SET", "sniper:last_error", msg)
+
+    def get_sniper_error(self) -> str | None:
+        return self._request("GET", "sniper:last_error")
+
     def get_all_config(self) -> dict:
         keys = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled"]
         config = {}
