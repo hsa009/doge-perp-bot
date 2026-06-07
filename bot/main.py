@@ -636,7 +636,7 @@ def trading_loop():
 
             # If a position exists for a different coin than active_asset, use the position's coin
             for check_coin in ("DOGE", "SOL"):
-                check_pos = hl.get_position(check_coin)
+                check_pos = _sniper_redis_cached(f"hl_pos_{check_coin}", lambda cc=check_coin: hl.get_position(cc))
                 if check_pos and float(check_pos["szi"]) != 0 and check_coin != coin:
                     logger.warning(f"Position open for {check_coin} but active_asset is {coin} — correcting to {check_coin}")
                     coin = check_coin
@@ -668,7 +668,7 @@ def trading_loop():
                 time.sleep(5)
                 continue
 
-            pos = hl.get_position(coin)
+            pos = _sniper_redis_cached(f"hl_pos_{coin}", lambda: hl.get_position(coin))
 
             if pos and float(pos["szi"]) != 0:
                 direction = "long" if float(pos["szi"]) > 0 else "short"
@@ -725,7 +725,7 @@ def trading_loop():
                     _apply_pending_asset()
                     redis.clear_current_signal()
 
-            signal = redis.get_current_signal()
+            signal = _sniper_redis_cached("current_signal", redis.get_current_signal)
             if not signal:
                 time.sleep(10)
                 continue
@@ -791,7 +791,7 @@ def trading_loop():
                 time.sleep(10)
                 continue
 
-            # V3 sniper: gate entry on top-3 L2 OBI ±0.65 aligned with macro bias.
+            # V3 sniper: gate entry on top-3 L2 OBI ±0.30 aligned with macro bias.
             # If OBI is unavailable (book error) or doesn't cross, 300ms tick and
             # re-evaluate. When OBI fires, fall through to the existing open_trade
             # + post-trade cooldown path — TP/SL math and execution are untouched.
@@ -799,10 +799,10 @@ def trading_loop():
             if obi is None:
                 time.sleep(0.3)
                 continue
-            if signal["direction"] == "long" and obi > 0.65:
-                logger.info(f"OBI trigger: long entry, obi={obi:.3f} > 0.65 (bias=long, coin={coin})")
-            elif signal["direction"] == "short" and obi < -0.65:
-                logger.info(f"OBI trigger: short entry, obi={obi:.3f} < -0.65 (bias=short, coin={coin})")
+            if signal["direction"] == "long" and obi > 0.30:
+                logger.info(f"OBI trigger: long entry, obi={obi:.3f} > 0.30 (bias=long, coin={coin})")
+            elif signal["direction"] == "short" and obi < -0.30:
+                logger.info(f"OBI trigger: short entry, obi={obi:.3f} < -0.30 (bias=short, coin={coin})")
             else:
                 time.sleep(0.3)
                 continue
