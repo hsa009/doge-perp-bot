@@ -739,7 +739,8 @@ def trading_loop():
                 time.sleep(30)
                 continue
 
-            if signal["confidence"] < cfg["min_confidence"]:
+            _is_forced = signal.get("_forced", False)
+            if signal["confidence"] < cfg["min_confidence"] and not _is_forced:
                 time.sleep(30)
                 continue
 
@@ -795,17 +796,22 @@ def trading_loop():
             # If OBI is unavailable (book error) or doesn't cross, 300ms tick and
             # re-evaluate. When OBI fires, fall through to the existing open_trade
             # + post-trade cooldown path — TP/SL math and execution are untouched.
-            obi = compute_obi(coin)
-            if obi is None:
-                time.sleep(0.3)
-                continue
-            if signal["direction"] == "long" and obi > 0.30:
-                logger.info(f"OBI trigger: long entry, obi={obi:.3f} > 0.30 (bias=long, coin={coin})")
-            elif signal["direction"] == "short" and obi < -0.30:
-                logger.info(f"OBI trigger: short entry, obi={obi:.3f} < -0.30 (bias=short, coin={coin})")
+            # Forced signals (consecutive_waits >= 3) bypass BOTH confidence and
+            # OBI gates so the sniper commits after a deadlock.
+            if _is_forced:
+                logger.info(f"FORCED entry: direction={signal['direction']}, confidence={signal['confidence']:.2f} (OBI bypassed, bias={signal['direction']}, coin={coin})")
             else:
-                time.sleep(0.3)
-                continue
+                obi = compute_obi(coin)
+                if obi is None:
+                    time.sleep(0.3)
+                    continue
+                if signal["direction"] == "long" and obi > 0.30:
+                    logger.info(f"OBI trigger: long entry, obi={obi:.3f} > 0.30 (bias=long, coin={coin})")
+                elif signal["direction"] == "short" and obi < -0.30:
+                    logger.info(f"OBI trigger: short entry, obi={obi:.3f} < -0.30 (bias=short, coin={coin})")
+                else:
+                    time.sleep(0.3)
+                    continue
 
             open_trade(signal, coin)
             time.sleep(10)
