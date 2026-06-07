@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
+VOTER_DEADLINE_S = 60
+GEMINI_429_RETRY_BACKOFF_S = 5
+
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
 
 
@@ -262,6 +265,20 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         return {"_error": f"EXC_{e}"}
 
 
+def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str, max_retries: int = 2) -> dict | None:
+    last = None
+    for attempt in range(max_retries):
+        last = call_gemini_http(api_key, key_label, prompt)
+        if last and "_error" not in last:
+            return last
+        if last and "HTTP_429" in str(last.get("_error", "")) and attempt < max_retries - 1:
+            logger.info(f"{key_label}: 429, retrying in {GEMINI_429_RETRY_BACKOFF_S * (attempt + 1)}s")
+            time.sleep(GEMINI_429_RETRY_BACKOFF_S * (attempt + 1))
+            continue
+        return last
+    return last
+
+
 def _extract_json(text: str) -> str:
     idx = text.find("{")
     if idx == -1:
@@ -429,26 +446,36 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
 
     _debug_calls: dict[str, str] = {}
 
-    with ThreadPoolExecutor(max_workers=len(keys_to_run)) as executor:
-        futures = {}
-        for k in keys_to_run:
-            futures[executor.submit(call_groq, k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)] = k
-        for future in as_completed(futures):
-            key = futures[future]
-            try:
-                result = future.result()
-                _debug_calls[f"groq_{key}"] = "ok" if result else "returned_none"
-                _save_vote(result, key, "groq")
-            except Exception as e:
-                _debug_calls[f"groq_{key}"] = f"EXC: {e}"
-                logger.warning(f"{key}: exception {e}")
+    voter_tasks: list[tuple[str, callable, tuple]] = []
+    for k in keys_to_run:
+        voter_tasks.append((f"groq_{k}", call_groq, (k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)))
+    for i, gk in enumerate(gemini_keys):
+        voter_tasks.append((f"gemini#{i}", call_gemini_http_with_retry, (gk, f"gemini#{i}", prompt)))
 
-    for i, key in enumerate(gemini_keys):
-        if i > 0:
-            time.sleep(random.uniform(2, 5))
-        result = call_gemini_http(key, f"gemini#{i}", prompt)
-        _debug_calls[f"gemini#{i}"] = result.get("_error", "ok") if isinstance(result, dict) else ("ok" if result else "returned_none")
-        _save_vote(result, f"gemini#{i}", "gemini")
+    results: dict[str, dict | None] = {}
+    with ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1)) as executor:
+        future_to_label = {}
+        for label, fn, args in voter_tasks:
+            time.sleep(random.uniform(0, 0.5))
+            future_to_label[executor.submit(fn, *args)] = label
+
+        for future in as_completed(future_to_label, timeout=VOTER_DEADLINE_S):
+            label = future_to_label[future]
+            try:
+                results[label] = future.result()
+            except Exception as e:
+                results[label] = {"_error": f"EXC_{e}"}
+
+    for label, result in results.items():
+        if isinstance(result, dict) and "_error" in result:
+            _debug_calls[label] = result["_error"]
+        elif result:
+            _debug_calls[label] = "ok"
+        else:
+            _debug_calls[label] = "returned_none"
+        voter_type = "groq" if label.startswith("groq_") else "gemini"
+        voter_name = label[len("groq_"):] if label.startswith("groq_") else label
+        _save_vote(result, voter_name, voter_type)
 
     if not details:
         logger.warning("All voters failed — returning wait")
@@ -458,11 +485,11 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     winners = [d for d, c in votes.items() if c == max_count]
     forced = False
 
-    if consecutive_waits >= 3 and "wait" in winners:
-        non_wait_winners = [w for w in winners if w != "wait"]
-        if non_wait_winners:
-            max_count_nw = max(votes[w] for w in non_wait_winners)
-            winners = [w for w in non_wait_winners if votes[w] == max_count_nw]
+    if consecutive_waits >= 3:
+        non_wait_votes = {w: c for w, c in votes.items() if w != "wait"}
+        if non_wait_votes:
+            max_count_nw = max(non_wait_votes.values())
+            winners = [w for w, c in non_wait_votes.items() if c == max_count_nw]
             winner = winners[0]
         else:
             if regime.startswith("TRENDING_UP"):
