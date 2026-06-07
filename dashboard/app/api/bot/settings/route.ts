@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { botFetch } from "@/lib/bot-api"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -6,16 +7,15 @@ export const revalidate = 0
 
 const SUPABASE_URL = process.env.SUPABASE_URL || ""
 const SUPABASE_KEY = process.env.SUPABASE_KEY || ""
-const BOT_API = process.env.BOT_API_URL || "https://ghaith1122331-doge-bot.hf.space"
 
 const VALID_ASSETS = ["DOGE", "SOL"]
 const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "groq_api_key", "gemini_api_key", "active_asset"]
 
 export async function GET() {
   try {
-    const resp = await fetch(`${BOT_API}/api/v1/bot/status`, {
+    const resp = await botFetch(`/api/v1/bot/status`, {
       signal: AbortSignal.timeout(15000),
-    })
+    } as RequestInit)
     const data = await resp.json()
     return NextResponse.json(data.config || {}, {
       headers: {
@@ -67,22 +67,20 @@ export async function POST(req: Request) {
 
   let assetResult: { ok: boolean; pending?: boolean; asset?: string; error?: string } | null = null
 
-  // Proxy active_asset through bot's asset endpoint (position check + pending logic)
   if (body.active_asset !== undefined) {
     try {
-      const resp = await fetch(`${BOT_API}/api/v1/bot/asset`, {
+      const resp = await botFetch(`/api/v1/bot/asset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ asset: body.active_asset }),
         signal: AbortSignal.timeout(15000),
-      })
+      } as RequestInit)
       assetResult = await resp.json()
     } catch {
       assetResult = { ok: false, error: "Bot API unreachable" }
     }
   }
 
-  // Proxy all non-asset settings through bot API (writes to Redis via bot, not dashboard)
   const nonAssetKeys = ALLOWED.filter((k) => k !== "active_asset" && body[k] !== undefined)
   if (nonAssetKeys.length > 0) {
     const settingsPayload: Record<string, string> = {}
@@ -90,18 +88,17 @@ export async function POST(req: Request) {
       settingsPayload[key] = String(body[key])
     }
     try {
-      await fetch(`${BOT_API}/api/v1/bot/settings`, {
+      await botFetch(`/api/v1/bot/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settingsPayload),
         signal: AbortSignal.timeout(15000),
-      })
+      } as RequestInit)
     } catch (e) {
       console.warn("Failed to save settings via bot API:", e)
     }
   }
 
-  // Persist to Supabase
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
       await Promise.all(
