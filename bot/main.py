@@ -381,6 +381,13 @@ _config_cache_ts: float = 0.0
 _config_cache_lock = threading.Lock()
 _CONFIG_CACHE_TTL = 2.0
 
+# Sniper: a non-forced, non-wait signal with confidence at/above this threshold
+# bypasses the OBI gate. Rationale: when the AI consensus is decisive (e.g.,
+# 2/2 voters agree long, capped to 0.95) the OBI hunt is just dead time.
+# Forced signals already bypass unconditionally; this is the lower bar for
+# high-confidence non-forced signals.
+_HIGH_CONF_OBI_BYPASS = 0.80
+
 # Generic 1s-TTL cache for high-frequency sniper reads (emergency stop,
 # bot running, position). Maps cache-key -> (expiry_monotonic, value).
 _sniper_redis_cache: dict[str, tuple[float, object]] = {}
@@ -797,9 +804,13 @@ def trading_loop():
             # re-evaluate. When OBI fires, fall through to the existing open_trade
             # + post-trade cooldown path — TP/SL math and execution are untouched.
             # Forced signals (consecutive_waits >= 3) bypass BOTH confidence and
-            # OBI gates so the sniper commits after a deadlock.
+            # OBI gates so the sniper commits after a deadlock. Non-forced
+            # signals with confidence >= _HIGH_CONF_OBI_BYPASS also bypass OBI
+            # so a decisive AI consensus is not held hostage to book depth.
             if _is_forced:
                 logger.info(f"FORCED entry: direction={signal['direction']}, confidence={signal['confidence']:.2f} (OBI bypassed, bias={signal['direction']}, coin={coin})")
+            elif signal["confidence"] >= _HIGH_CONF_OBI_BYPASS:
+                logger.info(f"HIGH-CONF entry: direction={signal['direction']}, confidence={signal['confidence']:.2f} >= {_HIGH_CONF_OBI_BYPASS} (OBI bypassed, bias={signal['direction']}, coin={coin})")
             else:
                 obi = compute_obi(coin)
                 if obi is None:
