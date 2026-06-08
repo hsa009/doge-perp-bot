@@ -637,7 +637,7 @@ def close_position_in_db(coin: str = "DOGE"):
     except Exception as ex:
         logger.exception(f"close_position_in_db error: {ex}")
     redis.clear_position()
-    redis.set_cooldown(coin, 10)
+    redis.set_cooldown(coin, 30)
     redis.set_config(f"peak_pnl:{coin}", "")
     redis.clear_current_signal()
 
@@ -721,12 +721,10 @@ def trading_loop():
                     current_peak = live_pnl
 
                 sl_usd = cfg["sl_usd"]
-                if current_peak >= 30.0:
-                    floor = 20.0
-                elif current_peak >= 20.0:
+                if current_peak >= 0.30:
+                    floor = 0.20
+                elif current_peak >= 0.20:
                     floor = current_peak - 0.05
-                elif current_peak >= 1.0:
-                    floor = current_peak - sl_usd
                 else:
                     floor = -sl_usd
 
@@ -748,7 +746,7 @@ def trading_loop():
                         logger.exception(f"Smart SL close error: {e}")
                     close_position_in_db(coin)
                     _apply_pending_asset()
-                    time.sleep(10)
+                    time.sleep(0.3)
                     continue
 
                 # V4: Throttled TP/SL order verification (every 30s)
