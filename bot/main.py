@@ -549,14 +549,21 @@ def open_trade(signal: dict, coin: str = "DOGE") -> bool:
         return False
     is_buy = signal["direction"] == "long"
     entry_price = hl.get_current_price(coin)
+
+    # --- DEBUG: capture config just before trade ---
+    logger.info(f"DEBUG_CFG: {json.dumps({k: v for k, v in cfg.items() if k != 'groq_api_key'})}")
+    # ---
+
     size_usd = cfg["trade_amount"]
     lev = cfg["leverage"]
     notional = size_usd * lev
 
     logger.info(f"COMMITTING TRADE: {signal['direction']} {coin} — confidence: {signal['confidence']:.2f} @ ${entry_price:.5f} (margin=${size_usd}, leverage={lev}x, notional=${notional:.2f})")
 
-    hl.set_leverage(coin, lev, is_cross=True)
+    lev_result = hl.set_leverage(coin, lev, is_cross=True)
+    logger.info(f"DEBUG_LEVERAGE: set_leverage({coin}, {lev}) returned {lev_result}")
     result = executor.open_market(coin, is_buy, notional)
+    logger.info(f"DEBUG_OPEN_MARKET: full response: {json.dumps(result, default=str)}")
 
     statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
     if not statuses or ("resting" not in statuses[0] and "filled" not in statuses[0]):
