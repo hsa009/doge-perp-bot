@@ -127,6 +127,16 @@ class RedisClient:
         result = self._request("GET", "signal:consecutive_waits")
         return int(result) if result else 0
 
+    def set_config_with_ttl(self, key: str, value: str, ttl: int):
+        self._request("SET", f"config:{key}", value)
+        self._request("EXPIRE", f"config:{key}", ttl)
+
+    def set_cooldown(self, coin: str, ttl: int = 10):
+        self.set_config_with_ttl(f"cooldown:{coin}", "1", ttl)
+
+    def get_cooldown(self, coin: str) -> bool:
+        return self._request("GET", f"config:cooldown:{coin}") == "1"
+
     def set_sniper_error(self, msg: str):
         self._request("SET", "sniper:last_error", msg)
 

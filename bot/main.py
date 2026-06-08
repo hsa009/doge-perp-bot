@@ -120,6 +120,8 @@ def bot_debug():
             "would_bypass_forced": bool(sig and sig.get("_forced")),
             "voter_count": len(sig.get("model_details", [])) if sig else 0,
             "last_error": redis.get_sniper_error(),
+            "cooldown_active": redis.get_cooldown(cfg_now.get("active_asset", "DOGE")),
+            "peak_pnl": float(redis.get_config(f"peak_pnl:{cfg_now.get('active_asset', 'DOGE')}", "0") or "0"),
         },
     })
 
@@ -635,6 +637,9 @@ def close_position_in_db(coin: str = "DOGE"):
     except Exception as ex:
         logger.exception(f"close_position_in_db error: {ex}")
     redis.clear_position()
+    redis.set_cooldown(coin, 10)
+    redis.set_config(f"peak_pnl:{coin}", "")
+    redis.clear_current_signal()
 
 
 def trading_loop():
@@ -642,7 +647,7 @@ def trading_loop():
     # Per-thread local state for the 300ms sniper cadence. Closure-scoped on
     # purpose: never module-global, so Flask request handlers can never read
     # or mutate it. The 1s caches below are the only shared state.
-    _state = {"last_pos_check": 0.0, "local_pos_active": False}
+    _state = {"last_order_check": 0.0, "last_pos_write": 0.0}
     while True:
         try:
             if _sniper_redis_cached("emergency_stop", redis.is_emergency_stop):
@@ -663,6 +668,11 @@ def trading_loop():
                     logger.warning(f"Position open for {check_coin} but active_asset is {coin} — correcting to {check_coin}")
                     coin = check_coin
                     break
+
+            # V4: Cooldown gate — skip entire tick if cooldown is active for this coin
+            if redis.get_cooldown(coin):
+                time.sleep(0.3)
+                continue
 
             # Handle close-position signal from dashboard
             if redis.get_close_position_signal():
@@ -699,37 +709,87 @@ def trading_loop():
                 sz = abs(float(pos["szi"]))
                 notional = sz * entry_px
                 is_buy = float(pos["szi"]) > 0
-                tp_ratio = cfg["tp_usd"] / notional
-                sl_ratio = cfg["sl_usd"] / notional
-                if is_buy:
-                    tp_price = entry_px * (1 + tp_ratio)
-                    sl_price = entry_px * (1 - sl_ratio)
+
+                # V4: Live PnL from exchange
+                live_pnl = float(pos.get("unrealizedPnl", 0))
+
+                # V4 Phase 3: Smart Moving Stop Loss
+                peak_key = f"peak_pnl:{coin}"
+                current_peak = float(redis.get_config(peak_key, "0") or "0")
+                if live_pnl > current_peak:
+                    redis.set_config(peak_key, str(live_pnl))
+                    current_peak = live_pnl
+
+                sl_usd = cfg["sl_usd"]
+                if current_peak >= 30.0:
+                    floor = 20.0
+                elif current_peak >= 20.0:
+                    floor = current_peak - 0.05
+                elif current_peak >= 1.0:
+                    floor = current_peak - sl_usd
                 else:
-                    tp_price = entry_px * (1 - tp_ratio)
-                    sl_price = entry_px * (1 + sl_ratio)
-                open_orders = hl.get_open_orders()
-                existing_reduce_only = [
-                    o for o in open_orders
-                    if o.get("coin") == coin and o.get("reduceOnly", False)
-                ]
-                if len(existing_reduce_only) < 2:
-                    logger.info(f"TP/SL missing ({len(existing_reduce_only)} reduceOnly orders) — placing now")
-                    _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
-                try:
-                    account_value = hl.get_balance()["account_value"]
-                except Exception:
-                    account_value = cached.get("account_value", 0) if cached else 0
-                redis.set_position({
-                    "coin": pos["coin"],
-                    "direction": direction,
-                    "size": float(pos["szi"]),
-                    "entry_price": entry_px,
-                    "unrealized_pnl": float(pos["unrealizedPnl"]),
-                    "account_value": account_value,
-                    "tp_price": tp_price,
-                    "sl_price": sl_price,
-                })
-                time.sleep(30)
+                    floor = -sl_usd
+
+                if live_pnl <= floor:
+                    logger.info(f"Smart SL triggered: PnL=${live_pnl:.2f} <= floor=${floor:.2f}")
+                    try:
+                        open_orders = hl.get_open_orders()
+                        for i, o in enumerate(open_orders):
+                            try:
+                                executor.exchange.cancel(o["coin"], o["oid"])
+                            except Exception:
+                                pass
+                            if i < len(open_orders) - 1:
+                                time.sleep(0.3)
+                        time.sleep(0.5)
+                        executor.close_position(coin=coin)
+                        logger.info(f"Position closed via smart SL ({coin})")
+                    except Exception as e:
+                        logger.exception(f"Smart SL close error: {e}")
+                    close_position_in_db(coin)
+                    _apply_pending_asset()
+                    time.sleep(10)
+                    continue
+
+                # V4: Throttled TP/SL order verification (every 30s)
+                now = time.monotonic()
+                if now - _state.get("last_order_check", -999) > 30.0:
+                    tp_ratio = cfg["tp_usd"] / notional
+                    sl_ratio = cfg["sl_usd"] / notional
+                    if is_buy:
+                        tp_price = entry_px * (1 + tp_ratio)
+                        sl_price = entry_px * (1 - sl_ratio)
+                    else:
+                        tp_price = entry_px * (1 - tp_ratio)
+                        sl_price = entry_px * (1 + sl_ratio)
+                    open_orders = hl.get_open_orders()
+                    existing_reduce_only = [
+                        o for o in open_orders
+                        if o.get("coin") == coin and o.get("reduceOnly", False)
+                    ]
+                    if len(existing_reduce_only) < 2:
+                        logger.info(f"TP/SL missing ({len(existing_reduce_only)} reduceOnly orders) — placing now")
+                        _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
+                    _state["last_order_check"] = now
+
+                # V4: Throttled Redis position write (every 5s)
+                if now - _state.get("last_pos_write", -999) > 5.0:
+                    try:
+                        account_value = hl.get_balance()["account_value"]
+                    except Exception:
+                        account_value = cached.get("account_value", 0) if cached else 0
+                    redis.set_position({
+                        "coin": pos["coin"],
+                        "direction": direction,
+                        "size": float(pos["szi"]),
+                        "entry_price": entry_px,
+                        "unrealized_pnl": live_pnl,
+                        "account_value": account_value,
+                        "peak_pnl": current_peak,
+                        "floor": floor,
+                    })
+                    _state["last_pos_write"] = now
+
                 continue
             elif pos is None:
                 cached = redis.get_position()
