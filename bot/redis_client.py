@@ -1,7 +1,10 @@
 import json
+import logging
 import time
 import httpx
 from bot.config import UPSTASH_REDIS_URL, UPSTASH_REDIS_TOKEN
+
+logger = logging.getLogger(__name__)
 
 
 class RedisClient:
