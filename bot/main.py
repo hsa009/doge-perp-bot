@@ -97,7 +97,7 @@ def bot_status():
             "pending_asset": pending_asset,
         })
     except Exception as e:
-        logger.exception(f"bot_status error: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -136,7 +136,7 @@ def bot_debug():
             },
         })
     except Exception as e:
-        logger.exception(f"bot_debug error: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
