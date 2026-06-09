@@ -28,11 +28,15 @@ class RedisClient:
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        resp = self.http.post(f"{self.rest_url}", content=payload, headers=headers)
-        data = resp.json()
-        if data.get("error"):
-            raise Exception(f"Upstash error: {data['error']}")
-        return data.get("result")
+        try:
+            resp = self.http.post(f"{self.rest_url}", content=payload, headers=headers)
+            data = resp.json()
+            if data.get("error"):
+                raise Exception(f"Upstash error: {data['error']}")
+            return data.get("result")
+        except Exception:
+            logger.exception("Redis _request failed")
+            return None
 
     def set_bot_running(self, running: bool):
         self._request("SET", "bot:running", "1" if running else "0")
