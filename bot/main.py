@@ -63,67 +63,81 @@ def health():
 
 @app.route("/api/v1/bot/status")
 def bot_status():
-    running = redis.is_bot_running()
-    signal = redis.get_current_signal()
-    position = redis.get_position()
-    cfg = get_runtime_config()
-    cfg["ai_loop_interval"] = str(AI_LOOP_INTERVAL)
-    cfg["groq_api_key"] = redis.get_config("groq_api_key", GROQ_API_KEY)
-    remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
-    active_asset = cfg.get("active_asset", "DOGE")
-    pending_asset = redis.get_config("pending_asset", "")
-    # If a pending switch exists but a position is open for a different coin, show the position's coin
-    if pending_asset:
-        for check_coin in ("DOGE", "SOL"):
-            check_pos = hl.get_position(check_coin)
-            if check_pos and float(check_pos["szi"]) != 0 and check_coin != active_asset:
-                cfg["active_asset"] = check_coin
-                active_asset = check_coin
-                break
-    return jsonify({
-        "running": running,
-        "last_signal": signal,
-        "position": position,
-        "mark_price": hl.get_current_price(active_asset),
-        "config": cfg,
-        "remaining_seconds": int(remaining),
-        "pending_asset": pending_asset,
-    })
+    try:
+        running = redis.is_bot_running()
+        signal = redis.get_current_signal()
+        position = redis.get_position()
+        cfg = get_runtime_config()
+        cfg["ai_loop_interval"] = str(AI_LOOP_INTERVAL)
+        cfg["groq_api_key"] = redis.get_config("groq_api_key", GROQ_API_KEY)
+        remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
+        active_asset = cfg.get("active_asset", "DOGE")
+        pending_asset = redis.get_config("pending_asset", "")
+        if pending_asset:
+            for check_coin in ("DOGE", "SOL"):
+                try:
+                    check_pos = hl.get_position(check_coin)
+                except Exception:
+                    check_pos = None
+                if check_pos and float(check_pos["szi"]) != 0 and check_coin != active_asset:
+                    cfg["active_asset"] = check_coin
+                    active_asset = check_coin
+                    break
+        try:
+            mark_price = hl.get_current_price(active_asset)
+        except Exception:
+            mark_price = 0.0
+        return jsonify({
+            "running": running,
+            "last_signal": signal,
+            "position": position,
+            "mark_price": mark_price,
+            "config": cfg,
+            "remaining_seconds": int(remaining),
+            "pending_asset": pending_asset,
+        })
+    except Exception as e:
+        logger.exception(f"bot_status error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/v1/bot/debug")
 def bot_debug():
-    from bot.signals.providers import MODEL_KEYS
-    enabled = redis.get_enabled_models()
-    defs = redis.get_model_defs()
-    sig = redis.get_current_signal()
-    sig_age = time.time() - sig.get("timestamp", 0) if sig else None
-    cfg_now = get_cached_runtime_config()
-    return jsonify({
-        "MODEL_KEYS": MODEL_KEYS,
-        "enabled_models": enabled,
-        "model_defs": defs or [],
-        "db_enabled": db.enabled,
-        "supabase_url_set": bool(os.environ.get("SUPABASE_URL")),
-        "supabase_key_set": bool(os.environ.get("SUPABASE_KEY")),
-        "gemini_keys_count": len(GEMINI_API_KEYS),
-        "gemini_keys_str": ",".join(GEMINI_API_KEYS)[:80] if GEMINI_API_KEYS else "EMPTY",
-        "ai_models": os.environ.get("AI_MODELS", "not set"),
-        "sniper": {
-            "high_conf_bypass": _HIGH_CONF_OBI_BYPASS,
-            "min_confidence": cfg_now.get("min_confidence"),
-            "current_signal_direction": sig.get("direction") if sig else None,
-            "current_signal_confidence": sig.get("confidence") if sig else None,
-            "current_signal_forced": sig.get("_forced") if sig else None,
-            "current_signal_age_s": sig_age,
-            "would_bypass_high_conf": bool(sig and sig.get("confidence", 0) >= _HIGH_CONF_OBI_BYPASS),
-            "would_bypass_forced": bool(sig and sig.get("_forced")),
-            "voter_count": len(sig.get("model_details", [])) if sig else 0,
-            "last_error": redis.get_sniper_error(),
-            "cooldown_active": redis.get_cooldown(cfg_now.get("active_asset", "DOGE")),
-            "peak_pnl": float(redis.get_config(f"peak_pnl:{cfg_now.get('active_asset', 'DOGE')}", "0") or "0"),
-        },
-    })
+    try:
+        from bot.signals.providers import MODEL_KEYS
+        enabled = redis.get_enabled_models()
+        defs = redis.get_model_defs()
+        sig = redis.get_current_signal()
+        sig_age = time.time() - sig.get("timestamp", 0) if sig else None
+        cfg_now = get_cached_runtime_config()
+        return jsonify({
+            "MODEL_KEYS": MODEL_KEYS,
+            "enabled_models": enabled,
+            "model_defs": defs or [],
+            "db_enabled": db.enabled,
+            "supabase_url_set": bool(os.environ.get("SUPABASE_URL")),
+            "supabase_key_set": bool(os.environ.get("SUPABASE_KEY")),
+            "gemini_keys_count": len(GEMINI_API_KEYS),
+            "gemini_keys_str": ",".join(GEMINI_API_KEYS)[:80] if GEMINI_API_KEYS else "EMPTY",
+            "ai_models": os.environ.get("AI_MODELS", "not set"),
+            "sniper": {
+                "high_conf_bypass": _HIGH_CONF_OBI_BYPASS,
+                "min_confidence": cfg_now.get("min_confidence"),
+                "current_signal_direction": sig.get("direction") if sig else None,
+                "current_signal_confidence": sig.get("confidence") if sig else None,
+                "current_signal_forced": sig.get("_forced") if sig else None,
+                "current_signal_age_s": sig_age,
+                "would_bypass_high_conf": bool(sig and sig.get("confidence", 0) >= _HIGH_CONF_OBI_BYPASS),
+                "would_bypass_forced": bool(sig and sig.get("_forced")),
+                "voter_count": len(sig.get("model_details", [])) if sig else 0,
+                "last_error": redis.get_sniper_error(),
+                "cooldown_active": redis.get_cooldown(cfg_now.get("active_asset", "DOGE")),
+                "peak_pnl": float(redis.get_config(f"peak_pnl:{cfg_now.get('active_asset', 'DOGE')}", "0") or "0"),
+            },
+        })
+    except Exception as e:
+        logger.exception(f"bot_debug error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/v1/account")
