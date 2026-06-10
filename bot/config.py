@@ -10,8 +10,9 @@ PHANTOM_EVM_PRIVATE_KEY = os.environ.get("PHANTOM_EVM_PRIVATE_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-UPSTASH_REDIS_URL = os.environ.get("UPSTASH_REDIS_URL", "")
-UPSTASH_REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_TOKEN", "")
+VALKEY_HOST = os.environ.get("VALKEY_HOST", "")
+VALKEY_PORT = int(os.environ.get("VALKEY_PORT", "16955"))
+VALKEY_PASSWORD = os.environ.get("VALKEY_PASSWORD", "")
 
 TRADE_AMOUNT_USD = float(os.environ.get("TRADE_AMOUNT_USD", "10.0"))
 POSITION_SIZE_USD = TRADE_AMOUNT_USD
