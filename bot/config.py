@@ -10,7 +10,7 @@ PHANTOM_EVM_PRIVATE_KEY = os.environ.get("PHANTOM_EVM_PRIVATE_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-REDIS_URL = os.environ.get("REDIS_URL", "")
+# REDIS_URL is read directly from environment by redis_client.py via os.getenv("REDIS_URL")
 
 TRADE_AMOUNT_USD = float(os.environ.get("TRADE_AMOUNT_USD", "10.0"))
 POSITION_SIZE_USD = TRADE_AMOUNT_USD
