@@ -1,4 +1,4 @@
-const BOT_API = (process.env.BOT_API_URL || "https://ghaith1122331-doge-bot-2.hf.space").replace(/\/$/, "")
+const BOT_API = "https://ghaith1122331-doge-bot.hf.space"
 const HF_TOKEN = process.env.HF_TOKEN || ""
 
 export async function botFetch(path: string, init?: RequestInit) {
