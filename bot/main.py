@@ -567,6 +567,7 @@ def safe_to_trade(coin: str, direction: str) -> bool:
     3. Active position check — exchange source of truth (#2).
     4. Redis position check — secondary safety net.
     """
+    global _is_placing_order
     with _is_placing_order_lock:
         if _is_placing_order:
             logger.warning("SAFE_TO_TRADE: ABORT — is_placing_order=True, an order is already executing")
@@ -601,6 +602,7 @@ def safe_to_trade(coin: str, direction: str) -> bool:
 
 
 def open_trade(signal: dict, coin: str = "DOGE") -> bool:
+    global _is_placing_order
     if not safe_to_trade(coin, signal["direction"]):
         with _is_placing_order_lock:
             _is_placing_order = False
