@@ -42,6 +42,9 @@ start_time = time.time()
 
 app = Flask(__name__)
 
+# Order-execution mutex — prevents concurrent overlapping trades
+_is_placing_order: bool = False
+_is_placing_order_lock = threading.Lock()
 
 @app.route("/")
 def index():
@@ -556,86 +559,138 @@ def _place_tp_sl(coin: str, is_buy: bool, notional: float, tp_price: float, sl_p
     return results
 
 
-def open_trade(signal: dict, coin: str = "DOGE") -> bool:
-    # Fresh config re-read right before execution
-    cfg = _validate_trade_config(coin, signal["direction"])
-    if cfg is None:
-        return False
-    is_buy = signal["direction"] == "long"
-    entry_price = hl.get_current_price(coin)
+def safe_to_trade(coin: str, direction: str) -> bool:
+    """Pre-flight validation right before any trade.
 
-    # --- DEBUG: capture config just before trade ---
-    logger.info(f"DEBUG_CFG: {json.dumps({k: v for k, v in cfg.items() if k != 'groq_api_key'})}")
-    # ---
-
-    size_usd = cfg["trade_amount"]
-    lev = cfg["leverage"]
-    notional = size_usd * lev
-
-    logger.info(f"COMMITTING TRADE: {signal['direction']} {coin} — confidence: {signal['confidence']:.2f} @ ${entry_price:.5f} (margin=${size_usd}, leverage={lev}x, notional=${notional:.2f})")
-
-    lev_result = hl.set_leverage(coin, lev, is_cross=True)
-    logger.info(f"DEBUG_LEVERAGE: set_leverage({coin}, {lev}) returned {lev_result}")
-    result = executor.open_market(coin, is_buy, notional)
-    logger.info(f"DEBUG_OPEN_MARKET: full response: {json.dumps(result, default=str)}")
-
-    statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
-    if not statuses or ("resting" not in statuses[0] and "filled" not in statuses[0]):
-        logger.error(f"Order failed: {result}")
-        try:
-            db.log("ERROR", f"Order failed: {result}")
-        except Exception:
-            pass
-        return False
-
-    entry_price = hl.get_current_price(coin)
-
-    tp_ratio = cfg["tp_usd"] / notional
-    sl_ratio = cfg["sl_usd"] / notional
-    if is_buy:
-        tp_price = entry_price * (1 + tp_ratio)
-        sl_price = entry_price * (1 - sl_ratio)
-    else:
-        tp_price = entry_price * (1 - tp_ratio)
-        sl_price = entry_price * (1 + sl_ratio)
-
-    _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
+    1. Mutex lock — no concurrent order in-flight (#3).
+    2. Hard fetch latest dashboard config from Valkey — abort if bot OFF (#1).
+    3. Active position check — exchange source of truth (#2).
+    4. Redis position check — secondary safety net.
+    """
+    with _is_placing_order_lock:
+        if _is_placing_order:
+            logger.warning("SAFE_TO_TRADE: ABORT — is_placing_order=True, an order is already executing")
+            return False
+        _is_placing_order = True
 
     try:
-        db.save_trade({
+        invalidate_config_cache()
+        cfg = get_runtime_config()
+        running = redis.is_bot_running()
+        logger.info(f"SAFE_TO_TRADE: coin={coin} dir={direction} running={running}")
+
+        if not running:
+            logger.warning("SAFE_TO_TRADE: ABORT — bot toggled OFF in dashboard")
+            return False
+
+        existing = hl.get_position(coin)
+        szi = float(existing.get("szi", 0)) if existing else 0.0
+        if abs(szi) > 1e-9:
+            logger.warning(f"SAFE_TO_TRADE: ABORT — active {coin} position on exchange (szi={szi})")
+            return False
+
+        redis_pos = redis.get_position()
+        if redis_pos:
+            logger.warning(f"SAFE_TO_TRADE: ABORT — Redis shows active position for {redis_pos.get('coin')}")
+            return False
+
+        return True
+    except Exception as e:
+        logger.error(f"SAFE_TO_TRADE: validation error: {e}")
+        return False
+
+
+def open_trade(signal: dict, coin: str = "DOGE") -> bool:
+    if not safe_to_trade(coin, signal["direction"]):
+        with _is_placing_order_lock:
+            _is_placing_order = False
+        return False
+
+    try:
+        cfg = _validate_trade_config(coin, signal["direction"])
+        if cfg is None:
+            return False
+        is_buy = signal["direction"] == "long"
+        entry_price = hl.get_current_price(coin)
+
+        # --- DEBUG: capture config just before trade ---
+        logger.info(f"DEBUG_CFG: {json.dumps({k: v for k, v in cfg.items() if k != 'groq_api_key'})}")
+        # ---
+
+        size_usd = cfg["trade_amount"]
+        lev = cfg["leverage"]
+        notional = size_usd * lev
+
+        logger.info(f"COMMITTING TRADE: {signal['direction']} {coin} — confidence: {signal['confidence']:.2f} @ ${entry_price:.5f} (margin=${size_usd}, leverage={lev}x, notional=${notional:.2f})")
+
+        lev_result = hl.set_leverage(coin, lev, is_cross=True)
+        logger.info(f"DEBUG_LEVERAGE: set_leverage({coin}, {lev}) returned {lev_result}")
+        result = executor.open_market(coin, is_buy, notional)
+        logger.info(f"DEBUG_OPEN_MARKET: full response: {json.dumps(result, default=str)}")
+
+        statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
+        if not statuses or ("resting" not in statuses[0] and "filled" not in statuses[0]):
+            logger.error(f"Order failed: {result}")
+            try:
+                db.log("ERROR", f"Order failed: {result}")
+            except Exception:
+                pass
+            return False
+
+        entry_price = hl.get_current_price(coin)
+
+        tp_ratio = cfg["tp_usd"] / notional
+        sl_ratio = cfg["sl_usd"] / notional
+        if is_buy:
+            tp_price = entry_price * (1 + tp_ratio)
+            sl_price = entry_price * (1 - sl_ratio)
+        else:
+            tp_price = entry_price * (1 - tp_ratio)
+            sl_price = entry_price * (1 + sl_ratio)
+
+        _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
+
+        try:
+            db.save_trade({
+                "coin": coin,
+                "direction": signal["direction"],
+                "entry_price": entry_price,
+                "entry_size_usd": size_usd,
+                "notional": notional,
+                "stop_loss_price": sl_price,
+                "take_profit_price": tp_price,
+                "leverage": lev,
+                "ai_confidence": signal.get("confidence"),
+                "ai_regime": signal.get("regime"),
+                "status": "open",
+            })
+        except Exception:
+            pass
+
+        redis.set_position({
             "coin": coin,
             "direction": signal["direction"],
             "entry_price": entry_price,
-            "entry_size_usd": size_usd,
-            "notional": notional,
-            "stop_loss_price": sl_price,
-            "take_profit_price": tp_price,
+            "size": notional,
             "leverage": lev,
-            "ai_confidence": signal.get("confidence"),
-            "ai_regime": signal.get("regime"),
-            "status": "open",
+            "margin": size_usd,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+            "opened_at": time.time(),
         })
-    except Exception:
-        pass
 
-    redis.set_position({
-        "coin": coin,
-        "direction": signal["direction"],
-        "entry_price": entry_price,
-        "size": notional,
-        "leverage": lev,
-        "margin": size_usd,
-        "tp_price": tp_price,
-        "sl_price": sl_price,
-        "opened_at": time.time(),
-    })
-
-    try:
-        db.log("INFO", f"Trade opened: {signal['direction']} {coin} @ {entry_price:.5f} (TP: {tp_price:.5f}, SL: {sl_price:.5f})")
-    except Exception:
-        pass
-    logger.info(f"Trade opened successfully")
-    return True
+        try:
+            db.log("INFO", f"Trade opened: {signal['direction']} {coin} @ {entry_price:.5f} (TP: {tp_price:.5f}, SL: {sl_price:.5f})")
+        except Exception:
+            pass
+        logger.info(f"Trade opened successfully")
+        return True
+    except Exception as e:
+        logger.exception(f"open_trade error: {e}")
+        return False
+    finally:
+        with _is_placing_order_lock:
+            _is_placing_order = False
 
 
 def close_position_in_db(coin: str = "DOGE"):
