@@ -1,24 +1,25 @@
 import json
 import logging
+import os
 import time
 import redis
-from bot.config import REDIS_URL
 
 logger = logging.getLogger(__name__)
 
 
 class RedisClient:
     def __init__(self):
-        if REDIS_URL:
-            self.client = redis.Redis.from_url(
-                REDIS_URL,
-                ssl_cert_reqs="none",
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-            )
-        else:
-            self.client = None
+        redis_url = os.getenv("REDIS_URL")
+        if not redis_url:
+            raise ValueError("CRITICAL: REDIS_URL secret is missing from Hugging Face Space settings!")
+        self.client = redis.Redis.from_url(
+            redis_url,
+            ssl_cert_reqs="none",
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )
+        self.client.ping()
 
     def _ok(self):
         return self.client is not None
