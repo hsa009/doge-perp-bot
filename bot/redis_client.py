@@ -19,7 +19,11 @@ class RedisClient:
             socket_connect_timeout=5,
             socket_timeout=5,
         )
-        self.client.ping()
+        try:
+            self.client.ping()
+            logger.info("Connected to Valkey/Redis")
+        except Exception as e:
+            logger.error(f"Valkey/Redis ping failed: {e}")
 
     def _ok(self):
         return self.client is not None
