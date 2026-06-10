@@ -14,7 +14,10 @@ class RedisClient:
             port=VALKEY_PORT,
             password=VALKEY_PASSWORD,
             ssl=True,
+            ssl_cert_reqs=None,
             decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
         )
 
     def set_bot_running(self, running: bool):
