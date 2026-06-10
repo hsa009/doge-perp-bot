@@ -9,7 +9,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || ""
 const SUPABASE_KEY = process.env.SUPABASE_KEY || ""
 
 const VALID_ASSETS = ["DOGE", "SOL"]
-const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "groq_api_key", "gemini_api_key", "active_asset"]
+const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "force_trade_after_waits", "groq_api_key", "gemini_api_key", "active_asset"]
 
 export async function GET() {
   try {
@@ -59,6 +59,9 @@ export async function POST(req: Request) {
   }
   if (body.active_asset !== undefined) {
     if (!VALID_ASSETS.includes(body.active_asset)) errors.push("active_asset must be DOGE or SOL")
+  }
+  if (body.force_trade_after_waits !== undefined) {
+    if (body.force_trade_after_waits !== "0" && body.force_trade_after_waits !== "1") errors.push("force_trade_after_waits must be 0 or 1")
   }
 
   if (errors.length) {

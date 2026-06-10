@@ -11,6 +11,7 @@ interface Props {
     min_confidence: string
     max_daily_loss: string
     max_daily_loss_enabled: string
+    force_trade_after_waits?: string
     groq_api_key: string
     active_asset?: string
   }
@@ -26,6 +27,7 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
   const [minConf, setMinConf] = useState(config.min_confidence)
   const [maxLoss, setMaxLoss] = useState(config.max_daily_loss)
   const [maxLossEnabled, setMaxLossEnabled] = useState(config.max_daily_loss_enabled === "1")
+  const [forceTrade, setForceTrade] = useState(config.force_trade_after_waits === "1")
   const [groqKey, setGroqKey] = useState(config.groq_api_key)
   const [activeAsset, setActiveAsset] = useState(config.active_asset ?? "DOGE")
   const [saving, setSaving] = useState(false)
@@ -46,6 +48,7 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
           min_confidence: minConf,
           max_daily_loss: maxLoss,
           max_daily_loss_enabled: maxLossEnabled ? "1" : "0",
+          force_trade_after_waits: forceTrade ? "1" : "0",
           groq_api_key: groqKey,
           active_asset: activeAsset,
         }),
@@ -113,6 +116,17 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${maxLossEnabled ? "bg-blue-600" : "bg-zinc-700"}`}
             >
               <span className={`inline-block h-5 w-5 rounded-full bg-white transition-transform ${maxLossEnabled ? "translate-x-5" : "translate-x-0"}`} />
+            </button>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-zinc-500">Force Trade After 3 Waits</label>
+          <div className="mt-2">
+            <button
+              onClick={() => setForceTrade(!forceTrade)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${forceTrade ? "bg-blue-600" : "bg-zinc-700"}`}
+            >
+              <span className={`inline-block h-5 w-5 rounded-full bg-white transition-transform ${forceTrade ? "translate-x-5" : "translate-x-0"}`} />
             </button>
           </div>
         </div>

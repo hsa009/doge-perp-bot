@@ -28,6 +28,7 @@ from bot.db import Database
 from bot.redis_client import RedisClient
 from bot.signals import providers as signal_engine
 from bot.signals.providers import get_model_defs
+from bot.signals.rules import ema as ema_func
 from bot.market_data import get_market_context
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -400,6 +401,7 @@ def get_runtime_config() -> dict:
         "min_confidence": _safe_float(redis.get_config("min_confidence", str(MIN_CONFIDENCE)), str(MIN_CONFIDENCE)),
         "max_daily_loss": _safe_float(redis.get_config("max_daily_loss", str(MAX_DAILY_LOSS_USD)), str(MAX_DAILY_LOSS_USD)),
         "max_daily_loss_enabled": redis.get_config("max_daily_loss_enabled", "1"),
+        "force_trade_after_waits": redis.get_config("force_trade_after_waits", "0"),
         "active_asset": redis.get_config("active_asset", ACTIVE_ASSET),
     }
 
@@ -1054,16 +1056,49 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
 
         market_context = get_market_context(hl, coin)
 
+        # --- Macro trend from 4H candles ---
+        macro_trend = "mixed"
+        liq_price = 0.0
+        liq_dist_pct = 0.0
+        try:
+            candles_4h = hl.info.candles_snapshot(
+                coin, "4h",
+                int((time.time() - 604800) * 1000),
+                int(time.time() * 1000),
+            )
+            if candles_4h:
+                rows_4h = []
+                for c in candles_4h:
+                    rows_4h.append(float(c["c"]))
+                closes_4h = pd.Series(rows_4h)
+                if len(closes_4h) >= 50:
+                    ema9 = ema_func(closes_4h, 9).iloc[-1]
+                    ema21 = ema_func(closes_4h, 21).iloc[-1]
+                    ema50 = ema_func(closes_4h, 50).iloc[-1]
+                    macro_trend = "bullish" if ema9 > ema21 > ema50 else "bearish" if ema9 < ema21 < ema50 else "mixed"
+        except Exception as e:
+            logger.warning(f"Failed to fetch 4h candles: {e}")
+
+        # --- Liquidation distance ---
+        close_price = ohlcv["close"].iloc[-1]
+        liq_dist_pct = round(100.0 / cfg["leverage"], 1)
+        liq_price = round(close_price * (1 - 1.0 / cfg["leverage"]), 4)
+
+        # --- Consecutive waits (only when toggle is ON) ---
         last = redis.get_current_signal()
         last_dir = last["direction"] if last else None
         last_reason = last.get("reasoning")[:120] if last else None
-        c_waits = redis.get_consecutive_waits()
-        if last_dir == "wait":
-            c_waits += 1
-            redis.set_consecutive_waits(c_waits)
-        else:
-            c_waits = 0
-            redis.set_consecutive_waits(0)
+        force_trade_on = cfg.get("force_trade_after_waits", "0") == "1"
+        c_waits = 0
+        if force_trade_on:
+            c_waits = redis.get_consecutive_waits()
+            if last_dir == "wait":
+                c_waits += 1
+                redis.set_consecutive_waits(c_waits)
+            else:
+                c_waits = 0
+                redis.set_consecutive_waits(0)
+
         pos = redis.get_position()
         current_pnl = float(pos.get("unrealized_pnl")) if pos and pos.get("unrealized_pnl") is not None else None
 
@@ -1071,7 +1106,7 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
             ohlcv,
             coin=coin,
             enabled_models=enabled_models,
-            allow_wait=(c_waits < 3),
+            allow_wait=(not force_trade_on) or (c_waits < 3),
             tp_usd=cfg["tp_usd"],
             sl_usd=cfg["sl_usd"],
             leverage=cfg["leverage"],
@@ -1084,6 +1119,9 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
             market_context=market_context,
             gemini_api_keys=gemini_api_keys,
             db=db,
+            macro_trend=macro_trend,
+            liq_price=liq_price,
+            liq_dist_pct=liq_dist_pct,
         )
 
         signal["_debug_redis_enabled"] = enabled_models
@@ -1299,6 +1337,7 @@ def seed_redis_config():
         "min_confidence": str(MIN_CONFIDENCE),
         "max_daily_loss": str(MAX_DAILY_LOSS_USD),
         "max_daily_loss_enabled": "1",
+        "force_trade_after_waits": "0",
         "groq_api_key": GROQ_API_KEY,
         "gemini_api_keys": ",".join(GEMINI_API_KEYS),
         "active_asset": ACTIVE_ASSET,

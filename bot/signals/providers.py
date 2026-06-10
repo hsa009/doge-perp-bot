@@ -89,14 +89,17 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
     }
 
 
-def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE", allow_wait: bool = True,
+def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
                  tp_usd: float = 3.0, sl_usd: float = 3.0,
                  leverage: int = 10, trade_amount: float = 10.0,
                  last_signal_direction: str | None = None,
                  last_signal_reasoning: str | None = None,
                  consecutive_waits: int = 0,
                  current_pnl: float | None = None,
-                 market_context: dict | None = None) -> str:
+                 market_context: dict | None = None,
+                 macro_trend: str = "mixed",
+                 liq_price: float = 0.0,
+                 liq_dist_pct: float = 0.0) -> str:
     i = indicators
     vol_ratio = i["volume"] / i["vol_ma_20"] if i["vol_ma_20"] > 0 else 1.0
     bb_pct = (i["close"] - i["bb_lower"]) / (i["bb_upper"] - i["bb_lower"]) if (i["bb_upper"] - i["bb_lower"]) > 0 else 0.5
@@ -114,9 +117,6 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE", 
             history_block += f" — \"{last_signal_reasoning[:80]}\""
     if current_pnl is not None:
         history_block += f"\nUnrealized PnL: ${current_pnl:.2f}"
-    if consecutive_waits >= 3:
-        allow_wait = False
-        history_block += "\nYou have chosen WAIT multiple times. You MUST choose LONG or SHORT now."
 
     market_block = ""
     if market_context:
@@ -146,8 +146,26 @@ Market Context:
   Open Interest: ${oi:,.0f}
   Recent Close Trend (last 15): {closes_str}"""
 
-    wait_rule = "\n- WAIT if trend is unclear or volatility too high" if allow_wait else ""
-    direction_enum = '"long"|"short"|"wait"' if allow_wait else '"long"|"short"'
+    if consecutive_waits >= 3:
+        conditional_block = (
+            "=== CRITICAL CONDITIONALS ===\n"
+            "\u26a0\ufe0f FORCED TIE-BREAKER PROTOCOL ACTIVE: You have chosen WAIT 3+ times "
+            "consecutively. You are now REQUIRED to break the deadlock and select LONG or SHORT.\n"
+            "1. Use the Order Book Ratio or Macro Trend to break the tie\u2014lean heavily in "
+            "the direction of the macro bias.\n"
+            "2. Because this is a forced choice under ambiguous conditions, your "
+            '"confidence" score MUST reflect this. Set confidence strictly between '
+            "0.1 and 0.4 to signal a low-probability forced entry."
+        )
+    else:
+        conditional_block = (
+            "=== CRITICAL EXECUTION RULE ===\n"
+            "Your absolute primary directive is capital preservation. If the trend and "
+            "momentum do not perfectly align across timeframes, if the order book spread "
+            "is too wide, or if the risk/reward profile is unfavorable, you must output WAIT.\n\n"
+            "There is zero penalty for choosing WAIT. Only issue a LONG or SHORT direction "
+            "if you have clear, multi-indicator confirmation."
+        )
 
     return f"""You are a {coin} perpetual futures analyst. Analyze the technical data to decide LONG, SHORT, or WAIT.
 
@@ -155,6 +173,7 @@ Market Context:
 Current price: ${i['close']:.5f}
 24h range: ${i['low']:.5f} - ${i['high']:.5f}
 Trend (EMA 9/21/50): {trend}
+Macro Trend (4H/1D): {macro_trend}
 RSI(14): {i['rsi']:.1f}
 MACD histogram: {i['macd_histogram']:.6f}
 ADX(14): {i['adx']:.1f}
@@ -162,11 +181,14 @@ ATR(14): ${i['atr']:.5f}
 Bollinger %B: {bb_pct:.2f}
 Volume ratio (vs 20-avg): {vol_ratio:.2f}x
 Market regime: {regime}
-{market_block}
+
+=== RISK & RISK/REWARD PROFILE ===
+Estimated Liquidation Price: ${liq_price} ({liq_dist_pct}% away from current)
 Trade config:
 - Position: ${trade_amount} margin @ {leverage}x = ${notional:.0f} notional
 - Target profit: ${tp_usd} ({tp_pct:.2f}% move needed)
 - Stop loss: ${sl_usd} ({sl_pct:.2f}% adverse move)
+{market_block}
 
 Analysis checklist:
 - Trend direction and strength (EMA alignment, ADX)
@@ -176,8 +198,11 @@ Analysis checklist:
 - ATR for volatility assessment
 - Overall risk/reward for a {tp_pct:.2f}% target vs {sl_pct:.2f}% stop
 {history_block}
+
+{conditional_block}
+
 Respond ONLY with valid JSON. Keep reasoning under 50 words:
-{{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
+{{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
 def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key: str | None = None) -> dict | None:
@@ -389,7 +414,10 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                    current_pnl: float | None = None,
                    market_context: dict | None = None,
                    gemini_api_keys: list[str] | None = None,
-                   db=None) -> dict:
+                   db=None,
+                   macro_trend: str = "mixed",
+                   liq_price: float = 0.0,
+                   liq_dist_pct: float = 0.0) -> dict:
     if ohlcv.empty or len(ohlcv) < 50:
         logger.warning("Not enough data for AI signal")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": [], "vote_tally": {}}
@@ -412,9 +440,13 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
         closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
         market_context["recent_closes"] = closes
 
-    prompt = build_prompt(indicators, regime, coin, allow_wait, tp_usd, sl_usd, leverage, trade_amount,
-                          last_signal_direction, last_signal_reasoning, consecutive_waits, current_pnl,
-                          market_context=market_context)
+    prompt = build_prompt(indicators, regime, coin,
+                          tp_usd=tp_usd, sl_usd=sl_usd, leverage=leverage, trade_amount=trade_amount,
+                          last_signal_direction=last_signal_direction,
+                          last_signal_reasoning=last_signal_reasoning,
+                          consecutive_waits=consecutive_waits, current_pnl=current_pnl,
+                          market_context=market_context,
+                          macro_trend=macro_trend, liq_price=liq_price, liq_dist_pct=liq_dist_pct)
 
     cycle_id = uuid.uuid4().hex[:12]
     votes = {"long": 0, "short": 0, "wait": 0}
