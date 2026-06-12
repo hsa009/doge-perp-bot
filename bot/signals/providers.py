@@ -157,6 +157,7 @@ Market Context:
             '"confidence" score MUST reflect this. Set confidence strictly between '
             "0.1 and 0.4 to signal a low-probability forced entry."
         )
+        direction_enum = '"long"|"short"'
     else:
         conditional_block = (
             "=== CRITICAL EXECUTION RULE ===\n"
@@ -166,6 +167,7 @@ Market Context:
             "There is zero penalty for choosing WAIT. Only issue a LONG or SHORT direction "
             "if you have clear, multi-indicator confirmation."
         )
+        direction_enum = '"long"|"short"|"wait"'
 
     return f"""You are a {coin} perpetual futures analyst. Analyze the technical data to decide LONG, SHORT, or WAIT.
 
@@ -202,7 +204,7 @@ Analysis checklist:
 {conditional_block}
 
 Respond ONLY with valid JSON. Keep reasoning under 50 words:
-{{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
+{{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
 def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key: str | None = None) -> dict | None:
