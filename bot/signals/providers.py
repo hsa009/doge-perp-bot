@@ -518,6 +518,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     max_count = max(votes.values())
     winners = [d for d, c in votes.items() if c == max_count]
     forced = False
+    non_wait_votes = None
+    max_count_nw = 0
 
     if consecutive_waits >= 3:
         non_wait_votes = {w: c for w, c in votes.items() if w != "wait"}
@@ -539,11 +541,13 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
         winner = winners[0]
 
     total_voters = len(details)
-    confidence = max_count / total_voters if total_voters > 0 else 0.0
+    if forced and non_wait_votes:
+        nw_total = sum(non_wait_votes.values())
+        confidence = max_count_nw / nw_total if nw_total > 0 else 0.0
+    else:
+        confidence = max_count / total_voters if total_voters > 0 else 0.0
 
     reasons = "; ".join(f"{d['name']}: {d['direction']} ({d['confidence']:.2f})" for d in details)
-    if forced:
-        reasons += f" | FORCED {winner.upper()} after {consecutive_waits} consecutive WAITs"
 
     logger.info(f"Vote: winner={winner} conf={confidence:.2f} voters={total_voters} tally={dict(votes)} cycle={cycle_id}")
     return {
