@@ -104,11 +104,15 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
     vol_ratio = i["volume"] / i["vol_ma_20"] if i["vol_ma_20"] > 0 else 1.0
     bb_pct = (i["close"] - i["bb_lower"]) / (i["bb_upper"] - i["bb_lower"]) if (i["bb_upper"] - i["bb_lower"]) > 0 else 0.5
 
-    trend = "bullish" if i["ema_9"] > i["ema_21"] > i["ema_50"] else "bearish" if i["ema_9"] < i["ema_21"] < i["ema_50"] else "mixed"
-
     notional = trade_amount * leverage
     tp_pct = (tp_usd / notional) * 100
     sl_pct = (sl_usd / notional) * 100
+
+    close_price = i["close"]
+    atr_val = i["atr"]
+    tp_pct_dist = (tp_usd / close_price) * 100
+    sl_pct_dist = (sl_usd / close_price) * 100
+    atr_vel_pct = (atr_val / close_price) * 100
 
     history_block = ""
     if last_signal_direction:
@@ -138,7 +142,6 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
         ratio_str = f"{bid_vol / ask_vol:.2f}x" if ask_vol > 0 else "N/A"
 
         market_block = f"""
-Market Context:
   Order Book: Bids {int(bid_vol)} @ {bid_px_str} vs Asks {int(ask_vol)} @ {ask_px_str}
   Bid/Ask Ratio: {ratio_str}
   Spread: {spread_pct:.4f}%
@@ -161,50 +164,44 @@ Market Context:
     else:
         conditional_block = (
             "=== CRITICAL EXECUTION RULE ===\n"
-            "Your absolute primary directive is capital preservation. If the trend and "
-            "momentum do not perfectly align across timeframes, if the order book spread "
-            "is too wide, or if the risk/reward profile is unfavorable, you must output WAIT.\n\n"
-            "There is zero penalty for choosing WAIT. Only issue a LONG or SHORT direction "
-            "if you have clear, multi-indicator confirmation."
+            "Your primary directive is execution efficiency based on immediate math and order-flow.\n\n"
+            "* TRIGGER LONG: Order book heavily favors bids, short-term price trend is accelerating upward, volume is high, and the calculated TP % is easily achievable within current ATR limits.\n"
+            "* TRIGGER SHORT: Order book heavily favors asks, short-term price trend is cascading downward, volume confirms selling, and the calculated TP % is within current ATR limits.\n"
+            "* TRIGGER WAIT: If the calculated TP % requires a price move that is too large relative to the current ATR (market is too dead to reach your target), if the risk/reward ratio is mathematically unfavorable, or if the order book is balanced 1:1."
         )
         direction_enum = '"long"|"short"|"wait"'
 
-    return f"""You are a {coin} perpetual futures analyst. Analyze the technical data to decide LONG, SHORT, or WAIT.
+    return f"""You are a hyper-aggressive, high-frequency {coin} perpetual futures scalping engine. Your sole objective is to exploit micro-level order-flow imbalances and rapid liquidity shifts. You dynamically calculate risk-to-reward viability on every single tick.
 
-=== TECHNICAL ANALYSIS ===
-Current price: ${i['close']:.5f}
-24h range: ${i['low']:.5f} - ${i['high']:.5f}
-Trend (EMA 9/21/50): {trend}
-Macro Trend (4H/1D): {macro_trend}
-RSI(14): {i['rsi']:.1f}
-MACD histogram: {i['macd_histogram']:.6f}
-ADX(14): {i['adx']:.1f}
-ATR(14): ${i['atr']:.5f}
+=== TECHNICAL & CONFIG DATA ===
+Current Price: ${close_price:.5f}
+ATR(14): ${atr_val:.5f}
 Bollinger %B: {bb_pct:.2f}
 Volume ratio (vs 20-avg): {vol_ratio:.2f}x
 Market regime: {regime}
-
-=== RISK & RISK/REWARD PROFILE ===
-Estimated Liquidation Price: ${liq_price} ({liq_dist_pct}% away from current)
-Trade config:
-- Position: ${trade_amount} margin @ {leverage}x = ${notional:.0f} notional
-- Target profit: ${tp_usd} ({tp_pct:.2f}% move needed)
-- Stop loss: ${sl_usd} ({sl_pct:.2f}% adverse move)
+Macro trend (4H/1D): {macro_trend}
+Estimated Liquidation Price: ${liq_price} ({liq_dist_pct}% from current)
+Position: ${trade_amount} margin @ {leverage}x = ${notional:.0f} notional
+Target Profit: ${tp_usd} ({tp_pct:.2f}% of notional)
+Stop Loss: ${sl_usd} ({sl_pct:.2f}% of notional)
 {market_block}
-
-Analysis checklist:
-- Trend direction and strength (EMA alignment, ADX)
-- Momentum (RSI, MACD histogram direction)
-- Volume confirmation
-- Support/resistance from Bollinger Bands
-- ATR for volatility assessment
-- Overall risk/reward for a {tp_pct:.2f}% target vs {sl_pct:.2f}% stop
 {history_block}
+
+=== REQUIRED PRE-TRADE MATHEMATICAL ASSESSMENT ===
+1. TP % Distance = ({tp_usd} / {close_price}) * 100 = {tp_pct_dist:.4f}%
+2. SL % Distance = ({sl_usd} / {close_price}) * 100 = {sl_pct_dist:.4f}%
+3. ATR % Velocity = ({atr_val} / {close_price}) * 100 = {atr_vel_pct:.4f}%
+
+=== SCALPER EVALUATION CHECKLIST ===
+1. Volatility Feasibility: Compare TP % Distance ({tp_pct_dist:.4f}%) to ATR % Velocity ({atr_vel_pct:.4f}%). For a fast scalp, the TP % must be achievable within 1 to 3 average candle moves (ATR). If the target requires a massive, multi-ATR extension without explosive volume, flag it as unviable.
+2. Order Book Delta (CRITICAL): Analyze the Bid/Ask ratio and spread. Massive imbalances (e.g., >3x) indicate immediate aggressive market orders hitting the book.
+3. Micro-Momentum Velocity: Check the last 15 close prices. Is price accelerating toward the target? Ignore macro EMAs (4H/1D) if immediate short-term velocity is explosive.
+4. Execution Environment: If Bollinger %B is near extremes (>= 0.90 or <= 0.10) combined with heavy volume, expect an immediate breakout extension toward your TP.
 
 {conditional_block}
 
 Respond ONLY with valid JSON. Keep reasoning under 50 words:
-{{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "..."}}"""
+{{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "[Include calculated TP% vs ATR% here] ..."}}"""
 
 
 def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key: str | None = None) -> dict | None:
