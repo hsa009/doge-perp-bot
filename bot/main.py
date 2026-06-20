@@ -546,27 +546,34 @@ def _place_tp_sl(coin: str, is_buy: bool, notional: float, tp_price: float, sl_p
     results = {"tp": None, "sl": None}
     try:
         open_orders = hl.get_open_orders()
-        for i, o in enumerate(open_orders):
+        for o in open_orders:
+            if o.get("coin") != coin:
+                continue
             try:
                 executor.exchange.cancel(o["coin"], o["oid"])
             except Exception:
                 logger.warning(f"Failed to cancel order {o.get('oid')}, continuing")
-            if i < len(open_orders) - 1:
-                time.sleep(0.3)
+            time.sleep(0.3)
     except Exception as e:
         logger.warning(f"Cancel existing orders: {e}")
     time.sleep(0.3)
-    try:
-        results["tp"] = executor.set_take_profit(coin, is_buy, notional, tp_price)
-        logger.info(f"TP result: {results['tp']}")
-    except Exception as e:
-        logger.error(f"TP placement failed: {e}")
+    for attempt in range(3):
+        try:
+            results["tp"] = executor.set_take_profit(coin, is_buy, notional, tp_price)
+            logger.info(f"TP result: {results['tp']}")
+            break
+        except Exception as e:
+            logger.error(f"TP placement failed (attempt {attempt+1}/3): {e}")
+            time.sleep(1)
     time.sleep(0.3)
-    try:
-        results["sl"] = executor.set_stop_loss(coin, is_buy, notional, sl_price)
-        logger.info(f"SL result: {results['sl']}")
-    except Exception as e:
-        logger.error(f"SL placement failed: {e}")
+    for attempt in range(3):
+        try:
+            results["sl"] = executor.set_stop_loss(coin, is_buy, notional, sl_price)
+            logger.info(f"SL result: {results['sl']}")
+            break
+        except Exception as e:
+            logger.error(f"SL placement failed (attempt {attempt+1}/3): {e}")
+            time.sleep(1)
     return results
 
 
@@ -800,6 +807,11 @@ def trading_loop():
                 sz = abs(float(pos["szi"]))
                 notional = sz * entry_px
                 is_buy = float(pos["szi"]) > 0
+
+                # Immediate TP/SL check when a NEW position is detected
+                if not cached or abs(cached.get("size", 0)) < 1e-9:
+                    logger.info(f"New position detected for {coin} — checking TP/SL immediately")
+                    _state["last_order_check"] = 0.0
 
                 # V4: Live PnL from exchange
                 live_pnl = float(pos.get("unrealizedPnl", 0))
