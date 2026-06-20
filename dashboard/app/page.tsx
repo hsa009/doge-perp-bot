@@ -176,7 +176,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4">
-      <StatusCard running={status?.running ?? false} onToggle={handleToggle} loading={toggling} />
+      <StatusCard running={status?.running ?? false} onToggle={handleToggle} loading={toggling} remainingSeconds={status?.remaining_seconds} />
 
       {status?.pending_asset && hasPosition && (
         <div className="rounded-xl border border-amber-700/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">

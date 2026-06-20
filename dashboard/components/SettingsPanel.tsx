@@ -2,6 +2,8 @@
 
 import { useState } from "react"
 
+const COINS = ["PEPE", "BONK", "FLOKI", "BOME", "WIF", "POPCAT", "DOGE", "SUI", "JUP", "PYTH", "SOL"]
+
 interface Props {
   config: {
     tp_usd: string
@@ -91,16 +93,15 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
         </div>
         <div>
           <label className="block text-xs text-zinc-500">Target Asset</label>
-          <div className="mt-1 flex rounded-lg border border-zinc-700 overflow-hidden">
-            <button
-              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "DOGE" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"} ${pendingAsset === "DOGE" ? "animate-pulse text-amber-300" : ""}`}
-              onClick={() => setActiveAsset("DOGE")}
-            >DOGE{pendingAsset === "DOGE" && <span className="ml-1 text-[10px]">(pending)</span>}</button>
-            <button
-              className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${activeAsset === "SOL" ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400"} ${pendingAsset === "SOL" ? "animate-pulse text-amber-300" : ""}`}
-              onClick={() => setActiveAsset("SOL")}
-            >SOL{pendingAsset === "SOL" && <span className="ml-1 text-[10px]">(pending)</span>}</button>
-          </div>
+          <select
+            value={activeAsset}
+            onChange={(e) => setActiveAsset(e.target.value)}
+            className={inputClass}
+          >
+            {COINS.map((c) => (
+              <option key={c} value={c}>{c}{pendingAsset === c ? " (pending)" : ""}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-xs text-zinc-500">Min Confidence</label>
