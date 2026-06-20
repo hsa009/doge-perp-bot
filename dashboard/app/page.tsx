@@ -117,7 +117,10 @@ export default function Dashboard() {
     fetchStatus()
     fetchStats()
     fetchMultiData()
-    const interval = setInterval(fetchStatus, 10_000)
+    const interval = setInterval(() => {
+      fetchStatus()
+      fetchMultiData()
+    }, 10_000)
     return () => clearInterval(interval)
   }, [fetchStatus, fetchStats, fetchMultiData])
 

@@ -1416,8 +1416,19 @@ def ai_loop():
                 continue
             pos = redis.get_position()
             if pos and pos.get("size", 0) != 0:
-                time.sleep(30)
-                continue
+                coin = pos.get("coin", "")
+                if coin:
+                    try:
+                        live = hl.get_position(coin)
+                        if not live or float(live.get("szi", 0)) == 0:
+                            logger.info(f"Stale Redis position for {coin} — clearing")
+                            redis.clear_position()
+                            pos = None
+                    except Exception:
+                        pass
+                if pos and pos.get("size", 0) != 0:
+                    time.sleep(30)
+                    continue
 
             last = redis.get_current_signal()
             last_time = last.get("timestamp", 0) if last else 0
