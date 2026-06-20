@@ -6,7 +6,7 @@ from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils.error import ClientError
 
-from bot.config import PHANTOM_EVM_PRIVATE_KEY, LEVERAGE, ACTIVE_ASSET
+from bot.config import PHANTOM_EVM_PRIVATE_KEY, LEVERAGE, ACTIVE_ASSET, COIN_LIST
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,14 @@ class HyperliquidClient:
     def get_doge_position(self) -> dict | None:
         return self.get_position("DOGE")
 
+    def get_all_positions(self) -> dict[str, dict]:
+        state = self.info.user_state(self.address)
+        result: dict[str, dict] = {}
+        for pos in state.get("assetPositions", []):
+            p = pos["position"]
+            result[p["coin"]] = p
+        return result
+
     def set_leverage(self, coin: str = "DOGE", leverage: int = 3, is_cross: bool = True):
         return self.exchange.update_leverage(leverage=leverage, name=coin, is_cross=is_cross)
 
@@ -91,10 +99,14 @@ class HyperliquidClient:
             return
 
         def _do_init():
-            pos = self.get_position(ACTIVE_ASSET)
-            if pos and float(pos["szi"]) != 0:
-                logger.info(f"Existing {ACTIVE_ASSET} position detected — skipping leverage change")
-            else:
-                self.set_leverage(ACTIVE_ASSET, leverage or LEVERAGE, is_cross=True)
+            for c in COIN_LIST:
+                try:
+                    pos = self.get_position(c)
+                    if pos and float(pos["szi"]) != 0:
+                        logger.info(f"Existing {c} position detected — skipping leverage change")
+                    else:
+                        self.set_leverage(c, leverage or LEVERAGE, is_cross=True)
+                except Exception:
+                    logger.warning(f"Failed to set leverage for {c}")
 
         _retry(_do_init)

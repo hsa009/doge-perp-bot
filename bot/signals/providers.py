@@ -2,13 +2,14 @@ import json
 import uuid
 import time
 import random
+import threading
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 import pandas as pd
 
-from bot.config import AI_MODELS, GROQ_API_KEY, GEMINI_API_KEY, GEMINI_API_KEYS, GEMINI_MODEL
+from bot.config import AI_MODELS, GROQ_API_KEY, GEMINI_API_KEY, GEMINI_API_KEYS, GEMINI_MODEL, FALLBACK_GEMINI_KEYS
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
@@ -289,7 +290,10 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         return {"_error": f"EXC_{e}"}
 
 
-def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str, max_retries: int = 2) -> dict | None:
+def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str,
+                                 max_retries: int = 2,
+                                 fallback_pool: list[str] | None = None,
+                                 pool_lock: "threading.Lock | None" = None) -> dict | None:
     last = None
     for attempt in range(max_retries):
         last = call_gemini_http(api_key, key_label, prompt)
@@ -299,6 +303,14 @@ def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str, max_r
             logger.info(f"{key_label}: 429, retrying in {GEMINI_429_RETRY_BACKOFF_S * (attempt + 1)}s")
             time.sleep(GEMINI_429_RETRY_BACKOFF_S * (attempt + 1))
             continue
+        if fallback_pool is not None and pool_lock is not None:
+            with pool_lock:
+                if fallback_pool:
+                    fb_key = fallback_pool.pop(0)
+                    fb_label = f"{key_label}_fb"
+                    logger.info(f"{key_label}: switching to fallback key ({len(fallback_pool)} remaining)")
+                    return call_gemini_http_with_retry(fb_key, fb_label, prompt, max_retries,
+                                                       fallback_pool, pool_lock)
         return last
     return last
 
@@ -403,7 +415,7 @@ Respond ONLY with valid JSON:
 {{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}}"""
 
 
-def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: list[str] | None = None, allow_wait: bool = True,
+def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: list[str] | None = None,
                    tp_usd: float = 3.0, sl_usd: float = 3.0,
                    leverage: int = 10, trade_amount: float = 10.0,
                    groq_api_key: str | None = None,
@@ -451,6 +463,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     votes = {"long": 0, "short": 0, "wait": 0}
     details: list[dict] = []
     gemini_keys = gemini_api_keys if gemini_api_keys is not None else GEMINI_API_KEYS
+    _gemini_fallback_pool = list(FALLBACK_GEMINI_KEYS)
+    _gemini_fallback_lock = threading.Lock()
 
     def _save_vote(entry: dict | None, voter_label: str, voter_type: str):
         if entry and "_error" not in entry and entry.get("direction"):
@@ -481,7 +495,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     for k in keys_to_run:
         voter_tasks.append((f"groq_{k}", call_groq, (k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)))
     for i, gk in enumerate(gemini_keys):
-        voter_tasks.append((f"gemini#{i}", call_gemini_http_with_retry, (gk, f"gemini#{i}", prompt)))
+        voter_tasks.append((f"gemini#{i}", call_gemini_http_with_retry,
+                            (gk, f"gemini#{i}", prompt, 2, _gemini_fallback_pool, _gemini_fallback_lock)))
 
     results: dict[str, dict | None] = {}
     with ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1)) as executor:
@@ -532,7 +547,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             else:
                 winner = "long"
         forced = True
-    elif len(winners) > 1 and allow_wait:
+    elif len(winners) > 1:
         winner = "wait"
     else:
         winner = winners[0]
