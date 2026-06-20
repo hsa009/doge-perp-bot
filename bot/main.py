@@ -1183,6 +1183,19 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
 
     logger.info(f"Aggregation tally: {tally}")
 
+    try:
+        redis.client.set("multi_asset_signals", json.dumps({
+            k: {"direction": v.get("direction"), "confidence": v.get("confidence"),
+                "reasoning": v.get("reasoning", "")[:500]}
+            for k, v in signals.items()
+        }))
+        redis.client.set("multi_asset_prompts", json.dumps({
+            k: v.get("prompt", "")
+            for k, v in signals.items()
+        }))
+    except Exception:
+        pass
+
     if not candidates:
         logger.info("All-Wait fallback — no trade this cycle")
         redis.set_current_signal({
@@ -1205,15 +1218,6 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
         redis.set_model_details(winner["model_details"])
 
     try:
-        redis.client.set("multi_asset_signals", json.dumps({
-            k: {"direction": v.get("direction"), "confidence": v.get("confidence"),
-                "reasoning": v.get("reasoning", "")[:500]}
-            for k, v in signals.items()
-        }))
-        redis.client.set("multi_asset_prompts", json.dumps({
-            k: v.get("prompt", "")
-            for k, v in signals.items()
-        }))
         redis.client.set("multi_asset_winner", winner.get("_coin", ""))
     except Exception:
         pass
@@ -1256,6 +1260,11 @@ def get_multi_asset_data():
             winner = raw
     except Exception:
         pass
+    for coin in COIN_LIST:
+        if coin not in signals:
+            signals[coin] = {"direction": None, "confidence": None, "reasoning": None}
+        if coin not in prompts:
+            prompts[coin] = ""
     return jsonify({"signals": signals, "prompts": prompts, "winner": winner})
 
 
