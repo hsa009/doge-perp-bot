@@ -33,6 +33,17 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 ACTIVE_ASSET = os.environ.get("ACTIVE_ASSET", "DOGE")
 
+COIN_LIST = os.environ.get("COIN_LIST", "PEPE,BONK,FLOKI,BOME,WIF,POPCAT,DOGE,SUI,JUP,PYTH").split(",")
+
+
+def get_coin_gemini_keys(coin: str) -> list[str]:
+    keys = []
+    for i in (1, 2, 3):
+        val = os.environ.get(f"{coin}_GEMINI_KEY{i}", "")
+        if val:
+            keys.append(val)
+    return keys
+
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
 HYPERLIQUID_API_URL = "https://api.hyperliquid.xyz"
