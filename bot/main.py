@@ -4,7 +4,7 @@ import time
 import traceback
 import threading
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import httpx
 import pandas as pd
 from flask import Flask, jsonify, request
@@ -1166,20 +1166,20 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
             future_to_coin[executor.submit(_run_single_coin_signal, coin, ctx)] = coin
 
         deadline = time.time() + 90
-        for future in as_completed(future_to_coin):
-            if time.time() > deadline:
-                logger.warning("Multi-asset signal run exceeding 90s deadline — collecting partial results")
-                break
-            coin = future_to_coin[future]
-            try:
-                result = future.result(timeout=10)
-                if result:
-                    signals[coin] = result
-                    logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
-                else:
-                    logger.warning(f"{coin}: no signal returned")
-            except Exception as e:
-                logger.exception(f"{coin}: signal error: {e}")
+        try:
+            for future in as_completed(future_to_coin, timeout=90):
+                coin = future_to_coin[future]
+                try:
+                    result = future.result(timeout=5)
+                    if result:
+                        signals[coin] = result
+                        logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
+                    else:
+                        logger.warning(f"{coin}: no signal returned")
+                except Exception as e:
+                    logger.exception(f"{coin}: signal error: {e}")
+        except TimeoutError:
+            logger.warning(f"Multi-asset signal run timed out after 90s — collected {len(signals)}/{len(coins)} signals")
 
     logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signals of {len(coins)} ===")
     return signals
