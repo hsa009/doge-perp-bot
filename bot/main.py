@@ -99,6 +99,7 @@ def bot_status():
             "config": cfg,
             "remaining_seconds": int(remaining),
             "pending_asset": pending_asset,
+            "ai_loop_heartbeat": redis.get_config("ai_loop_heartbeat", ""),
         })
     except Exception as e:
         traceback.print_exc()
@@ -156,24 +157,32 @@ def account():
 
 @app.route("/api/v1/bot/re-ask", methods=["POST"])
 def re_ask():
-    signals = run_multi_asset_signal()
-    winner = aggregate_signals(signals)
-    if winner:
-        return jsonify({"ok": True, "signal": winner})
-    return jsonify({"ok": True, "signal": {"direction": "wait", "confidence": 0.0}})
+    try:
+        signals = run_multi_asset_signal()
+        winner = aggregate_signals(signals)
+        if winner:
+            return jsonify({"ok": True, "signal": winner})
+        return jsonify({"ok": True, "signal": {"direction": "wait", "confidence": 0.0}})
+    except Exception as e:
+        logger.exception("re-ask failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/v1/bot/force-trade", methods=["POST"])
 def force_trade():
-    signals = run_multi_asset_signal()
-    winner = aggregate_signals(signals)
-    if winner and winner["direction"] in ("long", "short"):
-        coin = winner["_coin"]
-        opened = open_trade(winner, coin)
-        return jsonify({"ok": True, "signal": winner, "trade_opened": opened})
-    if winner:
-        return jsonify({"ok": True, "signal": winner, "trade_opened": False})
-    return jsonify({"ok": False, "error": "Signal generation failed"}), 500
+    try:
+        signals = run_multi_asset_signal()
+        winner = aggregate_signals(signals)
+        if winner and winner["direction"] in ("long", "short"):
+            coin = winner["_coin"]
+            opened = open_trade(winner, coin)
+            return jsonify({"ok": True, "signal": winner, "trade_opened": opened})
+        if winner:
+            return jsonify({"ok": True, "signal": winner, "trade_opened": False})
+        return jsonify({"ok": False, "error": "Signal generation failed"}), 500
+    except Exception as e:
+        logger.exception("force-trade failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/v1/bot/set-tp-sl", methods=["POST"])
@@ -1064,12 +1073,15 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
     return macro_trend, liq_price, liq_dist_pct
 
 
-def _run_single_coin_signal(coin: str, market_context: dict) -> dict | None:
+def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> dict | None:
     cfg = get_runtime_config()
     ohlcv = _fetch_ohlcv(coin)
     if ohlcv is None or ohlcv.empty:
         logger.warning(f"{coin}: no OHLCV — skipping")
         return None
+
+    if not market_context:
+        market_context = get_market_context(hl, coin)
 
     enabled_models = redis.get_enabled_models()
     if not enabled_models or set(enabled_models) != set(signal_engine.MODEL_KEYS):
@@ -1139,22 +1151,28 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
     if coins is None:
         coins = COIN_LIST
 
-    market_data = fetch_all_market_data(coins)
-    logger.info(f"Market data fetched for {len(market_data)} coins")
+    market_data: dict[str, dict] = {}
+    try:
+        market_data = fetch_all_market_data(coins)
+        logger.info(f"Market data fetched for {len(market_data)} coins")
+    except Exception as e:
+        logger.warning(f"Async market data fetch failed ({e}) — falling back to per-coin sync fetch")
 
     signals: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=min(len(coins), 10)) as executor:
         future_to_coin = {}
         for coin in coins:
-            if coin not in market_data:
-                logger.warning(f"{coin}: no market data — skipping")
-                continue
-            future_to_coin[executor.submit(_run_single_coin_signal, coin, market_data[coin])] = coin
+            ctx = market_data.get(coin)
+            future_to_coin[executor.submit(_run_single_coin_signal, coin, ctx)] = coin
 
+        deadline = time.time() + 90
         for future in as_completed(future_to_coin):
+            if time.time() > deadline:
+                logger.warning("Multi-asset signal run exceeding 90s deadline — collecting partial results")
+                break
             coin = future_to_coin[future]
             try:
-                result = future.result()
+                result = future.result(timeout=10)
                 if result:
                     signals[coin] = result
                     logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
@@ -1163,7 +1181,7 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
             except Exception as e:
                 logger.exception(f"{coin}: signal error: {e}")
 
-    logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signs of {len(coins)} ===")
+    logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signals of {len(coins)} ===")
     return signals
 
 
@@ -1411,6 +1429,7 @@ def ai_loop():
     logger.info("AI engine started")
     while True:
         try:
+            redis.set_config("ai_loop_heartbeat", str(time.time()))
             if not redis.is_bot_running():
                 time.sleep(10)
                 continue
