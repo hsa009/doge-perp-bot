@@ -34,7 +34,7 @@ FALLBACK_GEMINI_KEYS = [k.strip() for k in os.environ.get("FALLBACK_GEMINI_KEYS"
 
 ACTIVE_ASSET = os.environ.get("ACTIVE_ASSET", "DOGE")
 
-COIN_LIST = os.environ.get("COIN_LIST", "PEPE,BONK,FLOKI,BOME,WIF,POPCAT,DOGE,SUI,JUP,PYTH").split(",")
+COIN_LIST = os.environ.get("COIN_LIST", "PEPE,BONK,FLOKI,BOME,WIF,POPCAT,DOGE,SUI,JUP,PYTH,SOL").split(",")
 
 
 def get_coin_gemini_keys(coin: str) -> list[str]:

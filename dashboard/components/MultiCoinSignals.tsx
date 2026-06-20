@@ -15,7 +15,7 @@ interface MultiCoinSignalsProps {
   onSelectCoin: (coin: string) => void
 }
 
-const COINS = ["PEPE", "BONK", "FLOKI", "BOME", "WIF", "POPCAT", "DOGE", "SUI", "JUP", "PYTH"]
+const COINS = ["PEPE", "BONK", "FLOKI", "BOME", "WIF", "POPCAT", "DOGE", "SUI", "JUP", "PYTH", "SOL"]
 
 function DirectionBadge({ direction }: { direction?: string }) {
   if (!direction || direction === "wait") {
