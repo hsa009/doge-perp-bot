@@ -4,7 +4,7 @@ import time
 import random
 import threading
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 import httpx
 import pandas as pd
@@ -499,7 +499,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                             (gk, f"gemini#{i}", prompt, 2, _gemini_fallback_pool, _gemini_fallback_lock)))
 
     results: dict[str, dict | None] = {}
-    with ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1)) as executor:
+    executor = ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1))
+    try:
         future_to_label = {}
         for label, fn, args in voter_tasks:
             time.sleep(random.uniform(0, 0.5))
@@ -511,6 +512,10 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                 results[label] = future.result()
             except Exception as e:
                 results[label] = {"_error": f"EXC_{e}"}
+    except TimeoutError:
+        pass
+    finally:
+        executor.shutdown(wait=False)
 
     for label, result in results.items():
         if isinstance(result, dict) and "_error" in result:
