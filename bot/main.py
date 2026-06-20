@@ -4,7 +4,7 @@ import time
 import traceback
 import threading
 import logging
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import pandas as pd
 from flask import Flask, jsonify, request
@@ -18,9 +18,9 @@ from bot.config import (
     MAX_DAILY_LOSS_USD,
     AI_LOOP_INTERVAL,
     GROQ_API_KEY,
-    GEMINI_API_KEY,
-    GEMINI_API_KEYS,
     ACTIVE_ASSET,
+    COIN_LIST,
+    get_coin_gemini_keys,
 )
 from bot.hyperliquid_client import HyperliquidClient
 from bot.order_executor import OrderExecutor
@@ -29,7 +29,7 @@ from bot.redis_client import RedisClient
 from bot.signals import providers as signal_engine
 from bot.signals.providers import get_model_defs
 from bot.signals.rules import ema as ema_func
-from bot.market_data import get_market_context
+from bot.market_data import get_market_context, fetch_all_market_data
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -121,8 +121,8 @@ def bot_debug():
             "db_enabled": db.enabled,
             "supabase_url_set": bool(os.environ.get("SUPABASE_URL")),
             "supabase_key_set": bool(os.environ.get("SUPABASE_KEY")),
-            "gemini_keys_count": len(GEMINI_API_KEYS),
-            "gemini_keys_str": ",".join(GEMINI_API_KEYS)[:80] if GEMINI_API_KEYS else "EMPTY",
+            "gemini_keys_count": len([k for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k]),
+            "gemini_keys_str": os.environ.get("GEMINI_API_KEYS", "")[:80] or "per-coin",
             "ai_models": os.environ.get("AI_MODELS", "not set"),
             "sniper": {
                 "high_conf_bypass": _HIGH_CONF_OBI_BYPASS,
@@ -156,23 +156,23 @@ def account():
 
 @app.route("/api/v1/bot/re-ask", methods=["POST"])
 def re_ask():
-    coin = get_runtime_config().get("active_asset", "DOGE")
-    signal = run_ai_signal(coin, allow_wait=True, from_ai_loop=False)
-    if signal:
-        return jsonify({"ok": True, "signal": signal})
-    return jsonify({"ok": False, "error": "Signal generation failed"}), 500
+    signals = run_multi_asset_signal()
+    winner = aggregate_signals(signals)
+    if winner:
+        return jsonify({"ok": True, "signal": winner})
+    return jsonify({"ok": True, "signal": {"direction": "wait", "confidence": 0.0}})
 
 
 @app.route("/api/v1/bot/force-trade", methods=["POST"])
 def force_trade():
-    cfg = get_runtime_config()
-    coin = cfg.get("active_asset", "DOGE")
-    signal = run_ai_signal(coin, allow_wait=False, from_ai_loop=False)
-    if signal and signal["direction"] in ("long", "short"):
-        opened = open_trade(signal, coin)
-        return jsonify({"ok": True, "signal": signal, "trade_opened": opened})
-    if signal:
-        return jsonify({"ok": True, "signal": signal, "trade_opened": False})
+    signals = run_multi_asset_signal()
+    winner = aggregate_signals(signals)
+    if winner and winner["direction"] in ("long", "short"):
+        coin = winner["_coin"]
+        opened = open_trade(winner, coin)
+        return jsonify({"ok": True, "signal": winner, "trade_opened": opened})
+    if winner:
+        return jsonify({"ok": True, "signal": winner, "trade_opened": False})
     return jsonify({"ok": False, "error": "Signal generation failed"}), 500
 
 
@@ -741,11 +741,13 @@ def trading_loop():
             cfg = get_cached_runtime_config()
             coin = cfg.get("active_asset", "DOGE")
 
-            # If a position exists for a different coin than active_asset, use the position's coin
-            for check_coin in ("DOGE", "SOL"):
-                check_pos = _sniper_redis_cached(f"hl_pos_{check_coin}", lambda cc=check_coin: hl.get_position(cc))
-                if check_pos and float(check_pos["szi"]) != 0 and check_coin != coin:
-                    logger.warning(f"Position open for {check_coin} but active_asset is {coin} — correcting to {check_coin}")
+            # V5: Scan all coins for existing positions (single user_state call)
+            all_positions = _sniper_redis_cached("hl_all_positions", hl.get_all_positions)
+            for check_coin in COIN_LIST:
+                check_pos = all_positions.get(check_coin)
+                if check_pos and float(check_pos["szi"]) != 0:
+                    if check_coin != coin:
+                        logger.info(f"Position open for {check_coin} — switching from {coin}")
                     coin = check_coin
                     break
 
@@ -890,6 +892,13 @@ def trading_loop():
                 time.sleep(10)
                 continue
 
+            # Use signal's coin for entry when no position is open
+            if not (pos and float(pos["szi"]) != 0):
+                signal_coin = signal.get("_coin")
+                if signal_coin and signal_coin != coin:
+                    logger.info(f"No position — switching to signal's coin: {signal_coin}")
+                    coin = signal_coin
+
             if not is_bias_fresh(signal):
                 logger.warning(f"Stale macro bias: age={time.time() - signal.get('timestamp', 0):.0f}s > {AI_LOOP_INTERVAL * 2}s — sniper standing down")
                 time.sleep(10)
@@ -1000,30 +1009,20 @@ def trading_loop():
     logger.info("Trading loop terminated")
 
 
-_signal_call_count = 0
 
-@dataclass
-class _LastRunError:
-    error: str | None = None
-    traceback: str | None = None
-    timestamp: float = 0.0
 
-_last_error = _LastRunError()
 
-def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: bool = True) -> dict | None:
-    global _signal_call_count, _last_error
-    _signal_call_count += 1
+
+
+def _fetch_ohlcv(coin: str) -> pd.DataFrame | None:
     try:
         candles = hl.info.candles_snapshot(
             coin, "15m",
             int((time.time() - 86400) * 1000),
             int(time.time() * 1000),
         )
-
         if not candles:
-            logger.warning("No candles available")
             return None
-
         rows = []
         for c in candles:
             rows.append({
@@ -1034,135 +1033,204 @@ def run_ai_signal(coin: str = "DOGE", allow_wait: bool = True, from_ai_loop: boo
                 "close": float(c["c"]),
                 "volume": float(c["v"]),
             })
-
-        ohlcv = pd.DataFrame(rows).sort_values("timestamp").tail(100)
-
-        enabled_models = redis.get_enabled_models()
-        logger.info("run_ai_signal: enabled_models from Redis=%s", enabled_models)
-        if not enabled_models or set(enabled_models) != set(signal_engine.MODEL_KEYS):
-            logger.warning("Model mismatch detected — reseeding: redis=%s models=%s", enabled_models, signal_engine.MODEL_KEYS)
-            defs = signal_engine.get_model_defs()
-            redis.set_model_defs(defs)
-            redis.set_enabled_models(list(signal_engine.MODEL_KEYS))
-            enabled_models = list(signal_engine.MODEL_KEYS)
-            logger.info("Reseeded enabled_models=%s", enabled_models)
-        cfg = get_runtime_config()
-        groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
-        if not groq_key:
-            groq_key = GROQ_API_KEY
-        gemini_keys_str = ",".join(GEMINI_API_KEYS) or os.environ.get("GEMINI_API_KEYS", "")
-        gemini_api_keys = [k.strip() for k in gemini_keys_str.split(",") if k.strip()]
-        logger.info("Gemini keys loaded: %d from env=%s", len(gemini_api_keys), bool(os.environ.get("GEMINI_API_KEYS", "")))
-
-        market_context = get_market_context(hl, coin)
-
-        # --- Macro trend from 4H candles ---
-        macro_trend = "mixed"
-        liq_price = 0.0
-        liq_dist_pct = 0.0
-        try:
-            candles_4h = hl.info.candles_snapshot(
-                coin, "4h",
-                int((time.time() - 604800) * 1000),
-                int(time.time() * 1000),
-            )
-            if candles_4h:
-                rows_4h = []
-                for c in candles_4h:
-                    rows_4h.append(float(c["c"]))
-                closes_4h = pd.Series(rows_4h)
-                if len(closes_4h) >= 50:
-                    ema9 = ema_func(closes_4h, 9).iloc[-1]
-                    ema21 = ema_func(closes_4h, 21).iloc[-1]
-                    ema50 = ema_func(closes_4h, 50).iloc[-1]
-                    macro_trend = "bullish" if ema9 > ema21 > ema50 else "bearish" if ema9 < ema21 < ema50 else "mixed"
-        except Exception as e:
-            logger.warning(f"Failed to fetch 4h candles: {e}")
-
-        # --- Liquidation distance ---
-        close_price = ohlcv["close"].iloc[-1]
-        liq_dist_pct = round(100.0 / cfg["leverage"], 1)
-        liq_price = round(close_price * (1 - 1.0 / cfg["leverage"]), 4)
-
-        # --- Consecutive waits (only when toggle is ON) ---
-        last = redis.get_current_signal()
-        last_dir = last["direction"] if last else None
-        last_reason = last.get("reasoning")[:120] if last else None
-        force_trade_on = cfg.get("force_trade_after_waits", "0") == "1"
-        c_waits = 0
-        if force_trade_on:
-            c_waits = redis.get_consecutive_waits()
-            if last_dir == "wait":
-                c_waits += 1
-                redis.set_consecutive_waits(c_waits)
-            else:
-                c_waits = 0
-                redis.set_consecutive_waits(0)
-
-        pos = redis.get_position()
-        current_pnl = float(pos.get("unrealized_pnl")) if pos and pos.get("unrealized_pnl") is not None else None
-
-        signal = signal_engine.generate_signal(
-            ohlcv,
-            coin=coin,
-            enabled_models=enabled_models,
-            allow_wait=(not force_trade_on) or (c_waits < 3),
-            tp_usd=cfg["tp_usd"],
-            sl_usd=cfg["sl_usd"],
-            leverage=cfg["leverage"],
-            trade_amount=cfg["trade_amount"],
-            groq_api_key=groq_key,
-            last_signal_direction=last_dir,
-            last_signal_reasoning=last_reason,
-            consecutive_waits=c_waits,
-            current_pnl=current_pnl,
-            market_context=market_context,
-            gemini_api_keys=gemini_api_keys,
-            db=db,
-            macro_trend=macro_trend,
-            liq_price=liq_price,
-            liq_dist_pct=liq_dist_pct,
-        )
-
-        signal["_debug_redis_enabled"] = enabled_models
-        signal["_debug_call"] = _signal_call_count
-        signal["_debug_interval"] = AI_LOOP_INTERVAL
-        signal["_debug_gemini_count"] = len(gemini_api_keys)
-        signal["_debug_gemini_str"] = gemini_keys_str[:50] if gemini_keys_str else "empty"
-        details = signal.pop("model_details", [])
-        signal["model_details"] = details
-        signal["timestamp"] = time.time()
-        redis.set_current_signal(signal)
-        redis.set_model_details(details)
-        logger.info(f"Signal: {signal['direction']} ({signal['confidence']:.2f}) — {signal.get('reasoning', '')[:120]}")
-
-        try:
-            db.save_signal({
-                "coin": coin,
-                "direction": signal["direction"],
-                "confidence": signal["confidence"],
-                "regime": signal.get("regime"),
-                "reasoning": signal.get("reasoning"),
-                "action_taken": "published",
-            })
-        except Exception:
-            pass
-
-        return signal
+        return pd.DataFrame(rows).sort_values("timestamp").tail(100)
     except Exception as e:
-        logger.exception(f"run_ai_signal error: {e}")
-        tb = traceback.format_exc()
-        _last_error = _LastRunError(error=str(e), traceback=tb, timestamp=time.time())
+        logger.warning(f"Failed to fetch OHLCV for {coin}: {e}")
         return None
+
+
+def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
+    macro_trend = "mixed"
+    close_price = 0.0
+    try:
+        candles_4h = hl.info.candles_snapshot(
+            coin, "4h",
+            int((time.time() - 604800) * 1000),
+            int(time.time() * 1000),
+        )
+        if candles_4h:
+            rows_4h = [float(c["c"]) for c in candles_4h]
+            closes_4h = pd.Series(rows_4h)
+            if len(closes_4h) >= 50:
+                ema9 = ema_func(closes_4h, 9).iloc[-1]
+                ema21 = ema_func(closes_4h, 21).iloc[-1]
+                ema50 = ema_func(closes_4h, 50).iloc[-1]
+                macro_trend = "bullish" if ema9 > ema21 > ema50 else "bearish" if ema9 < ema21 < ema50 else "mixed"
+            close_price = float(candles_4h[-1]["c"])
+    except Exception as e:
+        logger.warning(f"Failed to fetch 4h candles for {coin}: {e}")
+    liq_dist_pct = round(100.0 / leverage, 1) if leverage else 1.0
+    liq_price = round(close_price * (1 - 1.0 / leverage), 4) if close_price and leverage else 0.0
+    return macro_trend, liq_price, liq_dist_pct
+
+
+def _run_single_coin_signal(coin: str, market_context: dict) -> dict | None:
+    cfg = get_runtime_config()
+    ohlcv = _fetch_ohlcv(coin)
+    if ohlcv is None or ohlcv.empty:
+        logger.warning(f"{coin}: no OHLCV — skipping")
+        return None
+
+    enabled_models = redis.get_enabled_models()
+    if not enabled_models or set(enabled_models) != set(signal_engine.MODEL_KEYS):
+        logger.warning(f"Model mismatch — reseeding for {coin}")
+        redis.set_model_defs(signal_engine.get_model_defs())
+        redis.set_enabled_models(list(signal_engine.MODEL_KEYS))
+        enabled_models = list(signal_engine.MODEL_KEYS)
+
+    groq_key = redis.get_config("groq_api_key", GROQ_API_KEY) or GROQ_API_KEY
+    gemini_keys = get_coin_gemini_keys(coin)
+
+    closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
+    market_context["recent_closes"] = closes
+
+    macro_trend, liq_price, liq_dist_pct = _compute_macro_trend(coin, cfg["leverage"])
+
+    last = redis.get_current_signal()
+    last_dir = last["direction"] if last else None
+    last_reason = last.get("reasoning", "")[:120] if last else None
+
+    pos = redis.get_position()
+    current_pnl = float(pos.get("unrealized_pnl")) if pos and pos.get("unrealized_pnl") is not None else None
+
+    signal = signal_engine.generate_signal(
+        ohlcv,
+        coin=coin,
+        enabled_models=enabled_models,
+        tp_usd=cfg["tp_usd"],
+        sl_usd=cfg["sl_usd"],
+        leverage=cfg["leverage"],
+        trade_amount=cfg["trade_amount"],
+        groq_api_key=groq_key,
+        last_signal_direction=last_dir,
+        last_signal_reasoning=last_reason,
+        consecutive_waits=0,
+        current_pnl=current_pnl,
+        market_context=market_context,
+        gemini_api_keys=gemini_keys,
+        db=db,
+        macro_trend=macro_trend,
+        liq_price=liq_price,
+        liq_dist_pct=liq_dist_pct,
+    )
+
+    signal["_coin"] = coin
+    signal["timestamp"] = time.time()
+    details = signal.pop("model_details", [])
+    signal["model_details"] = details
+
+    try:
+        db.save_signal({
+            "coin": coin,
+            "direction": signal["direction"],
+            "confidence": signal["confidence"],
+            "regime": signal.get("regime"),
+            "reasoning": signal.get("reasoning"),
+            "action_taken": "published",
+        })
+    except Exception:
+        pass
+
+    return signal
+
+
+def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
+    logger.info("=== MULTI-ASSET SIGNAL RUN START ===")
+    if coins is None:
+        coins = COIN_LIST
+
+    market_data = fetch_all_market_data(coins)
+    logger.info(f"Market data fetched for {len(market_data)} coins")
+
+    signals: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(len(coins), 10)) as executor:
+        future_to_coin = {}
+        for coin in coins:
+            if coin not in market_data:
+                logger.warning(f"{coin}: no market data — skipping")
+                continue
+            future_to_coin[executor.submit(_run_single_coin_signal, coin, market_data[coin])] = coin
+
+        for future in as_completed(future_to_coin):
+            coin = future_to_coin[future]
+            try:
+                result = future.result()
+                if result:
+                    signals[coin] = result
+                    logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
+                else:
+                    logger.warning(f"{coin}: no signal returned")
+            except Exception as e:
+                logger.exception(f"{coin}: signal error: {e}")
+
+    logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signs of {len(coins)} ===")
+    return signals
+
+
+def aggregate_signals(signals: dict[str, dict]) -> dict | None:
+    if not signals:
+        logger.info("aggregate_signals: no signals to aggregate")
+        return None
+
+    candidates: list[dict] = []
+    tally: dict[str, int] = {"long": 0, "short": 0, "wait": 0}
+    for coin, sig in signals.items():
+        d = sig.get("direction", "wait")
+        tally[d] = tally.get(d, 0) + 1
+        if d in ("long", "short"):
+            entry = {**sig, "_coin": coin}
+            candidates.append(entry)
+
+    logger.info(f"Aggregation tally: {tally}")
+
+    if not candidates:
+        logger.info("All-Wait fallback — no trade this cycle")
+        redis.set_current_signal({
+            "direction": "wait",
+            "confidence": 0.0,
+            "reasoning": "All 10 coins returned WAIT — no trade",
+            "tally": tally,
+            "timestamp": time.time(),
+        })
+        return None
+
+    candidates.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    winner = candidates[0]
+    coin: str = winner["_coin"]
+    logger.info(f"Winner: {coin} {winner['direction']} ({winner['confidence']:.2f}) across {len(candidates)} candidates")
+
+    redis.set_config("active_asset", coin)
+    redis.set_current_signal(winner)
+    if winner.get("model_details"):
+        redis.set_model_details(winner["model_details"])
+
+    try:
+        redis.client.set("multi_asset_signals", json.dumps({
+            k: {"direction": v.get("direction"), "confidence": v.get("confidence"),
+                "reasoning": v.get("reasoning", "")[:80]}
+            for k, v in signals.items()
+        }))
+    except Exception:
+        pass
+
+    try:
+        db.save_signal({
+            "coin": coin,
+            "direction": winner["direction"],
+            "confidence": winner["confidence"],
+            "regime": winner.get("regime"),
+            "reasoning": winner.get("reasoning"),
+            "action_taken": "aggregated_winner",
+        })
+    except Exception:
+        pass
+
+    return winner
 
 
 @app.route("/api/v1/bot/last-error")
 def last_error():
-    return jsonify({
-        "error": _last_error.error,
-        "traceback": _last_error.traceback,
-        "timestamp": _last_error.timestamp,
-    })
+    return jsonify({"error": None, "traceback": None, "timestamp": 0})
 
 @app.route("/api/v1/bot/voter-health")
 def voter_health():
@@ -1311,7 +1379,6 @@ def ai_loop():
                 time.sleep(30)
                 continue
 
-            coin = get_runtime_config().get("active_asset", "DOGE")
             last = redis.get_current_signal()
             last_time = last.get("timestamp", 0) if last else 0
             wait = max(0, last_time + AI_LOOP_INTERVAL - time.time())
@@ -1322,7 +1389,8 @@ def ai_loop():
                     time.sleep(60)
                 continue
 
-            run_ai_signal(coin, allow_wait=True, from_ai_loop=True)
+            signals = run_multi_asset_signal()
+            aggregate_signals(signals)
         except Exception as e:
             logger.exception(f"AI loop error: {e}")
             time.sleep(60)
@@ -1339,12 +1407,11 @@ def seed_redis_config():
         "max_daily_loss_enabled": "1",
         "force_trade_after_waits": "0",
         "groq_api_key": GROQ_API_KEY,
-        "gemini_api_keys": ",".join(GEMINI_API_KEYS),
         "active_asset": ACTIVE_ASSET,
     }
     for key, val in defaults.items():
         existing = redis.get_config(key, "")
-        if not existing or key in ("groq_api_key", "gemini_api_keys"):
+        if not existing or key == "groq_api_key":
             redis.set_config(key, val)
             logger.info(f"Seeded Redis config:{key} = {val}")
 

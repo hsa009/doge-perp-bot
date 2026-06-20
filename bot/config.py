@@ -30,6 +30,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_API_KEYS = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+FALLBACK_GEMINI_KEYS = [k.strip() for k in os.environ.get("FALLBACK_GEMINI_KEYS", "").split(",") if k.strip()]
 
 ACTIVE_ASSET = os.environ.get("ACTIVE_ASSET", "DOGE")
 
@@ -42,6 +43,9 @@ def get_coin_gemini_keys(coin: str) -> list[str]:
         val = os.environ.get(f"{coin}_GEMINI_KEY{i}", "")
         if val:
             keys.append(val)
+    if not keys and coin.upper() == "SOL":
+        global_keys = GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
+        keys = [k for k in global_keys if k]
     return keys
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
