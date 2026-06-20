@@ -247,8 +247,8 @@ def set_active_asset():
     try:
         data = request.get_json(force=True)
         asset = data.get("asset", "").upper()
-        if asset not in ("DOGE", "SOL"):
-            return jsonify({"ok": False, "error": "Asset must be DOGE or SOL"}), 400
+        if asset not in [c.upper() for c in COIN_LIST]:
+            return jsonify({"ok": False, "error": f"Asset must be one of: {', '.join(COIN_LIST)}"}), 400
         current = redis.get_config("active_asset", ACTIVE_ASSET)
         if asset == current:
             pending = redis.get_config("pending_asset", "")
@@ -257,7 +257,7 @@ def set_active_asset():
                 logger.info(f"Pending switch to {pending} cancelled")
             return jsonify({"ok": True, "asset": asset})
         has_position = False
-        for coin in ("DOGE", "SOL"):
+        for coin in COIN_LIST:
             pos = hl.get_position(coin)
             if pos and float(pos["szi"]) != 0:
                 has_position = True
