@@ -7,6 +7,7 @@ interface Props {
   onToggle: () => void
   loading: boolean
   remainingSeconds?: number
+  heartbeat?: string
 }
 
 function formatTime(seconds: number): string {
@@ -15,7 +16,7 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`
 }
 
-export default function StatusCard({ running, onToggle, loading, remainingSeconds }: Props) {
+export default function StatusCard({ running, onToggle, loading, remainingSeconds, heartbeat }: Props) {
   const [display, setDisplay] = useState(remainingSeconds ?? 0)
 
   useEffect(() => {
@@ -30,6 +31,8 @@ export default function StatusCard({ running, onToggle, loading, remainingSecond
     return () => clearInterval(id)
   }, [display])
 
+  const heartbeatAlive = heartbeat && (Date.now() / 1000 - parseFloat(heartbeat)) < 120
+
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex items-center justify-between">
@@ -38,10 +41,10 @@ export default function StatusCard({ running, onToggle, loading, remainingSecond
             <p className="text-sm text-zinc-400">Bot Status</p>
             <div className="mt-1 flex items-center gap-2">
               <span
-                className={`h-3 w-3 rounded-full ${running ? "bg-green-500" : "bg-red-500"}`}
+                className={`h-3 w-3 rounded-full ${running ? (heartbeatAlive ? "bg-green-500" : "bg-amber-500") : "bg-red-500"}`}
               />
               <span className="text-lg font-semibold text-white">
-                {running ? "Running" : "Stopped"}
+                {running ? (heartbeatAlive ? "Running" : "Pending...") : "Stopped"}
               </span>
             </div>
           </div>
