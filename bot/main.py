@@ -1179,7 +1179,7 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
 
         deadline = time.time() + 90
         try:
-            for future in as_completed(future_to_coin, timeout=90):
+            for future in as_completed(future_to_coin, timeout=120):
                 coin = future_to_coin[future]
                 try:
                     result = future.result(timeout=5)
@@ -1191,7 +1191,7 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
                 except Exception as e:
                     logger.exception(f"{coin}: signal error: {e}")
         except TimeoutError:
-            logger.warning(f"Multi-asset signal run timed out after 90s — collected {len(signals)}/{len(coins)} signals")
+            logger.warning(f"Multi-asset signal run timed out after 120s — collected {len(signals)}/{len(coins)} signals")
 
     logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signals of {len(coins)} ===")
     return signals

@@ -23,6 +23,10 @@ interface Props {
 
 const HL_INFO = "https://api.hyperliquid.xyz/info"
 
+const EXCHANGE_NAMES: Record<string, string> = {
+  PEPE: "kPEPE", BONK: "kBONK", FLOKI: "kFLOKI",
+}
+
 export default function TradingChart({ position, coin = "DOGE" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const zoneCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -171,7 +175,8 @@ export default function TradingChart({ position, coin = "DOGE" }: Props) {
         body: JSON.stringify({ type: "allMids" }),
       })
       const data = await resp.json()
-      const mid = data?.mids?.[coin]
+      const exName = EXCHANGE_NAMES[coin] || coin
+      const mid = data?.mids?.[exName]
       if (mid) {
         const px = parseFloat(mid)
         setCurrentPrice(px)
