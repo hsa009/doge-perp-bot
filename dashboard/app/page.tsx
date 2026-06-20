@@ -232,10 +232,46 @@ export default function Dashboard() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-2">Active Asset</h3>
-          <p className="text-sm text-zinc-300">
-            Trading: <span className="font-mono font-semibold text-zinc-100">{status?.config?.active_asset || "DOGE"}</span>
-          </p>
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-2">Selected Asset</h3>
+          {multiData.winner && multiData.signals?.[multiData.winner] ? (
+            (() => {
+              const ws = multiData.signals[multiData.winner]
+              const dir = ws.direction
+              const conf = ws.confidence ?? 0
+              const confPct = Math.min(Math.max(conf * 100, 0), 100)
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-lg font-bold text-amber-400">
+                      {multiData.winner} ⭐
+                    </span>
+                    <span
+                      className={
+                        `inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ` +
+                        (dir === "long" ? "bg-green-900/60 text-green-400" : dir === "short" ? "bg-red-900/60 text-red-400" : "bg-zinc-800 text-zinc-500")
+                      }
+                    >
+                      {dir || "WAIT"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${confPct >= 70 ? "bg-green-500" : confPct >= 40 ? "bg-yellow-500" : "bg-zinc-600"}`}
+                        style={{ width: `${confPct}%` }}
+                      />
+                    </div>
+                    <span className="font-mono text-[11px] text-zinc-400 w-8 text-right">{confPct}%</span>
+                  </div>
+                  {ws.reasoning && (
+                    <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{ws.reasoning}</p>
+                  )}
+                </div>
+              )
+            })()
+          ) : (
+            <p className="text-sm text-zinc-500">Waiting for AI cycle...</p>
+          )}
         </div>
         <PnLSummary totalPnl={stats.total_pnl} winRate={stats.win_rate} totalTrades={stats.total_trades} />
       </div>
@@ -259,7 +295,6 @@ export default function Dashboard() {
 
       <SettingsPanel
         config={status?.config ?? defaultConfig}
-        pendingAsset={status?.pending_asset}
         onSaved={fetchStatus}
       />
 

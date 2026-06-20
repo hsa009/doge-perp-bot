@@ -2,8 +2,6 @@
 
 import { useState } from "react"
 
-const COINS = ["PEPE", "BONK", "FLOKI", "BOME", "WIF", "POPCAT", "DOGE", "SUI", "JUP", "PYTH", "SOL"]
-
 interface Props {
   config: {
     tp_usd: string
@@ -15,13 +13,11 @@ interface Props {
     max_daily_loss_enabled: string
     force_trade_after_waits?: string
     groq_api_key: string
-    active_asset?: string
   }
-  pendingAsset?: string
   onSaved: () => void
 }
 
-export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) {
+export default function SettingsPanel({ config, onSaved }: Props) {
   const [tp, setTp] = useState(config.tp_usd)
   const [sl, setSl] = useState(config.sl_usd)
   const [amount, setAmount] = useState(config.trade_amount)
@@ -31,13 +27,10 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
   const [maxLossEnabled, setMaxLossEnabled] = useState(config.max_daily_loss_enabled === "1")
   const [forceTrade, setForceTrade] = useState(config.force_trade_after_waits === "1")
   const [groqKey, setGroqKey] = useState(config.groq_api_key)
-  const [activeAsset, setActiveAsset] = useState(config.active_asset ?? "DOGE")
   const [saving, setSaving] = useState(false)
-  const [pendingMsg, setPendingMsg] = useState<string | null>(null)
 
   const handleSave = async () => {
     setSaving(true)
-    setPendingMsg(null)
     try {
       const resp = await fetch("/api/bot/settings", {
         method: "POST",
@@ -52,13 +45,8 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
           max_daily_loss_enabled: maxLossEnabled ? "1" : "0",
           force_trade_after_waits: forceTrade ? "1" : "0",
           groq_api_key: groqKey,
-          active_asset: activeAsset,
         }),
       })
-      const data = await resp.json()
-      if (data?.pending) {
-        setPendingMsg(`Will switch to ${activeAsset} when current position closes`)
-      }
       onSaved()
     } finally {
       setSaving(false)
@@ -92,18 +80,6 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
           </select>
         </div>
         <div>
-          <label className="block text-xs text-zinc-500">Target Asset</label>
-          <select
-            value={activeAsset}
-            onChange={(e) => setActiveAsset(e.target.value)}
-            className={inputClass}
-          >
-            {COINS.map((c) => (
-              <option key={c} value={c}>{c}{pendingAsset === c ? " (pending)" : ""}</option>
-            ))}
-          </select>
-        </div>
-        <div>
           <label className="block text-xs text-zinc-500">Min Confidence</label>
           <input type="number" step="0.05" min="0" max="1" value={minConf} onChange={(e) => setMinConf(e.target.value)} className={inputClass} />
         </div>
@@ -132,18 +108,13 @@ export default function SettingsPanel({ config, pendingAsset, onSaved }: Props) 
           </div>
         </div>
         <div className="flex items-end">
-          <div className="flex flex-col gap-1">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
-            >
-              {saving ? "Saving..." : "Save Settings"}
-            </button>
-            {pendingMsg && (
-              <span className="text-[11px] text-amber-400 text-center">{pendingMsg}</span>
-            )}
-          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save Settings"}
+          </button>
         </div>
       </div>
       <div className="mt-3">
