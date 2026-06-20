@@ -1207,9 +1207,14 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
     try:
         redis.client.set("multi_asset_signals", json.dumps({
             k: {"direction": v.get("direction"), "confidence": v.get("confidence"),
-                "reasoning": v.get("reasoning", "")[:80]}
+                "reasoning": v.get("reasoning", "")[:500]}
             for k, v in signals.items()
         }))
+        redis.client.set("multi_asset_prompts", json.dumps({
+            k: v.get("prompt", "")
+            for k, v in signals.items()
+        }))
+        redis.client.set("multi_asset_winner", winner.get("_coin", ""))
     except Exception:
         pass
 
@@ -1226,6 +1231,32 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
         pass
 
     return winner
+
+
+@app.route("/api/v1/bot/multi-asset-data")
+def get_multi_asset_data():
+    signals = {}
+    prompts = {}
+    winner = ""
+    try:
+        raw = redis.client.get("multi_asset_signals")
+        if raw:
+            signals = json.loads(raw)
+    except Exception:
+        pass
+    try:
+        raw = redis.client.get("multi_asset_prompts")
+        if raw:
+            prompts = json.loads(raw)
+    except Exception:
+        pass
+    try:
+        raw = redis.client.get("multi_asset_winner")
+        if raw:
+            winner = raw
+    except Exception:
+        pass
+    return jsonify({"signals": signals, "prompts": prompts, "winner": winner})
 
 
 @app.route("/api/v1/bot/last-error")

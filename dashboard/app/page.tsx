@@ -2,13 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react"
 import StatusCard from "../components/StatusCard"
-import SignalDisplay from "../components/SignalDisplay"
 import PnLSummary from "../components/PnLSummary"
 import SettingsPanel from "../components/SettingsPanel"
 import AiModelsCard from "../components/AiModelsCard"
 import TradingChart from "../components/TradingChart"
 import ProfitCalculator from "../components/ProfitCalculator"
 import VoterHealth from "../components/VoterHealth"
+import MultiCoinSignals from "../components/MultiCoinSignals"
+import PromptViewer from "../components/PromptViewer"
 
 interface BotStatus {
   running: boolean
@@ -81,6 +82,12 @@ export default function Dashboard() {
   const [closing, setClosing] = useState(false)
   const [reasking, setReasking] = useState(false)
   const [forcing, setForcing] = useState(false)
+  const [selectedCoin, setSelectedCoin] = useState("DOGE")
+  const [multiData, setMultiData] = useState<{ signals: Record<string, any> | null; prompts: Record<string, string> | null; winner: string }>({
+    signals: null,
+    prompts: null,
+    winner: "",
+  })
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -96,12 +103,23 @@ export default function Dashboard() {
     if (resp.ok) setStats(await resp.json())
   }, [])
 
+  const fetchMultiData = useCallback(async () => {
+    try {
+      const resp = await fetch("/api/bot/multi-asset-data")
+      if (resp.ok) {
+        const data = await resp.json()
+        setMultiData({ signals: data.signals || null, prompts: data.prompts || null, winner: data.winner || "" })
+      }
+    } catch {}
+  }, [])
+
   useEffect(() => {
     fetchStatus()
     fetchStats()
+    fetchMultiData()
     const interval = setInterval(fetchStatus, 10_000)
     return () => clearInterval(interval)
-  }, [fetchStatus, fetchStats])
+  }, [fetchStatus, fetchStats, fetchMultiData])
 
   const handleToggle = async () => {
     setToggling(true)
@@ -190,7 +208,7 @@ export default function Dashboard() {
       )}
 
       <div className={`grid gap-4 ${hasPosition ? "lg:grid-cols-[1fr_280px]" : ""}`}>
-        <TradingChart position={hasPosition ? pos : null} coin={activeAsset} />
+        <TradingChart position={hasPosition ? pos : null} coin={selectedCoin} />
 
         {hasPosition && (
           <ProfitCalculator
@@ -203,12 +221,22 @@ export default function Dashboard() {
         )}
       </div>
 
+      <MultiCoinSignals
+        signals={multiData.signals}
+        winner={multiData.winner}
+        selectedCoin={selectedCoin}
+        onSelectCoin={setSelectedCoin}
+      />
+
+      <PromptViewer prompts={multiData.prompts} selectedCoin={selectedCoin} />
+
       <div className="grid gap-4 md:grid-cols-2">
-        <SignalDisplay
-          signal={status?.last_signal ?? null}
-          remainingSeconds={status?.remaining_seconds}
-          running={status?.running ?? false}
-        />
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-2">Active Asset</h3>
+          <p className="text-sm text-zinc-300">
+            Trading: <span className="font-mono font-semibold text-zinc-100">{status?.config?.active_asset || "DOGE"}</span>
+          </p>
+        </div>
         <PnLSummary totalPnl={stats.total_pnl} winRate={stats.win_rate} totalTrades={stats.total_trades} />
       </div>
 
