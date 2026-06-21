@@ -1038,15 +1038,19 @@ def trading_loop():
 def _fetch_ohlcv(coin: str) -> pd.DataFrame | None:
     try:
         # Some coins (PEPE/BONK/FLOKI) use k-prefixed exchange names
+        import httpx
         if coin in ("PEPE", "BONK", "FLOKI"):
             hl_coin = f"k{coin}"
         else:
             hl_coin = coin
-        candles = hl.info.candles_snapshot(
-            hl_coin, "15m",
-            int((time.time() - 86400) * 1000),
-            int(time.time() * 1000),
-        )
+        resp = httpx.post("https://api.hyperliquid.xyz/info", json={
+            "type": "candleSnapshot",
+            "req": {"coin": hl_coin, "interval": "15m",
+                     "startTime": int((time.time() - 86400) * 1000),
+                     "endTime": int(time.time() * 1000)},
+        }, timeout=30)
+        resp.raise_for_status()
+        candles = resp.json()
         if not candles:
             return None
         rows = []
@@ -1069,12 +1073,19 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
     macro_trend = "mixed"
     close_price = 0.0
     try:
+        import httpx
         if coin in ("PEPE", "BONK", "FLOKI"):
             hl_coin = f"k{coin}"
         else:
             hl_coin = coin
-        candles_4h = hl.info.candles_snapshot(
-            hl_coin, "4h",
+        resp = httpx.post("https://api.hyperliquid.xyz/info", json={
+            "type": "candleSnapshot",
+            "req": {"coin": hl_coin, "interval": "4h",
+                     "startTime": int((time.time() - 604800) * 1000),
+                     "endTime": int(time.time() * 1000)},
+        }, timeout=30)
+        resp.raise_for_status()
+        candles_4h = resp.json()
             int((time.time() - 604800) * 1000),
             int(time.time() * 1000),
         )

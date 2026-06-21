@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
-VOTER_DEADLINE_S = 60
+VOTER_DEADLINE_S = 120
 GEMINI_429_RETRY_BACKOFF_S = 5
 
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
