@@ -1314,6 +1314,17 @@ def get_multi_asset_data():
     return jsonify({"signals": signals, "prompts": prompts, "winner": winner})
 
 
+@app.route("/api/v1/bot/debug-ohlcv")
+def debug_ohlcv():
+    coin = request.args.get("coin", "")
+    if not coin:
+        return jsonify({"error": "missing coin param"}), 400
+    result = _fetch_ohlcv(coin)
+    if result is not None and not result.empty:
+        return jsonify({"ok": True, "rows": len(result), "last_close": float(result["close"].iloc[-1])})
+    return jsonify({"ok": False, "rows": 0})
+
+
 @app.route("/api/v1/bot/last-error")
 def last_error():
     return jsonify({"error": None, "traceback": None, "timestamp": 0})
