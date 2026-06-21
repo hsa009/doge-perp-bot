@@ -1341,6 +1341,16 @@ def debug_signal():
         return jsonify({"ok": False, "error": str(e), "traceback": traceback.format_exc()})
 
 
+@app.route("/api/v1/bot/debug-multi")
+def debug_multi():
+    try:
+        sigs = run_multi_asset_signal()
+        return jsonify({"ok": True, "count": len(sigs), "coins": list(sigs.keys())})
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": str(e), "traceback": traceback.format_exc()})
+
+
 @app.route("/api/v1/bot/last-error")
 def last_error():
     return jsonify({"error": None, "traceback": None, "timestamp": 0})
