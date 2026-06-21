@@ -1086,9 +1086,6 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
         }, timeout=30)
         resp.raise_for_status()
         candles_4h = resp.json()
-            int((time.time() - 604800) * 1000),
-            int(time.time() * 1000),
-        )
         if candles_4h:
             rows_4h = [float(c["c"]) for c in candles_4h]
             closes_4h = pd.Series(rows_4h)
