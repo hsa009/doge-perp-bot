@@ -1239,8 +1239,8 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
             k: v.get("prompt", "")
             for k, v in signals.items()
         }))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to save multi-asset data to Redis: {e}")
 
     if not candidates:
         logger.info("All-Wait fallback — no trade this cycle")
@@ -1349,6 +1349,16 @@ def debug_multi():
     except Exception as e:
         import traceback
         return jsonify({"ok": False, "error": str(e), "traceback": traceback.format_exc()})
+
+
+@app.route("/api/v1/bot/debug-redis")
+def debug_redis():
+    raw = redis.client.get("multi_asset_signals")
+    if raw:
+        signals = json.loads(raw)
+        return jsonify({"ok": True, "count": len(signals), "coins": list(signals.keys()),
+                        "has_none": sum(1 for v in signals.values() if v.get("direction") is None)})
+    return jsonify({"ok": False, "raw": None})
 
 
 @app.route("/api/v1/bot/last-error")
