@@ -45,7 +45,7 @@ def get_coin_gemini_keys(coin: str) -> list[str]:
             keys.append(val)
     if not keys:
         keys = list(FALLBACK_GEMINI_KEYS)
-    if not keys and coin.upper() == "SOL":
+    if not keys:
         global_keys = GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
         keys = [k for k in global_keys if k]
     return keys

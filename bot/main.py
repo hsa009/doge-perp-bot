@@ -1037,8 +1037,13 @@ def trading_loop():
 
 def _fetch_ohlcv(coin: str) -> pd.DataFrame | None:
     try:
+        # Some coins (PEPE/BONK/FLOKI) use k-prefixed exchange names
+        if coin in ("PEPE", "BONK", "FLOKI"):
+            hl_coin = f"k{coin}"
+        else:
+            hl_coin = coin
         candles = hl.info.candles_snapshot(
-            coin, "15m",
+            hl_coin, "15m",
             int((time.time() - 86400) * 1000),
             int(time.time() * 1000),
         )
@@ -1064,8 +1069,12 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
     macro_trend = "mixed"
     close_price = 0.0
     try:
+        if coin in ("PEPE", "BONK", "FLOKI"):
+            hl_coin = f"k{coin}"
+        else:
+            hl_coin = coin
         candles_4h = hl.info.candles_snapshot(
-            coin, "4h",
+            hl_coin, "4h",
             int((time.time() - 604800) * 1000),
             int(time.time() * 1000),
         )
