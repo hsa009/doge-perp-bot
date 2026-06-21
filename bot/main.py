@@ -864,12 +864,12 @@ def trading_loop():
                         tp_price = entry_px * (1 - tp_ratio)
                         sl_price = entry_px * (1 + sl_ratio)
                     open_orders = hl.get_open_orders()
-                    existing_reduce_only = [
+                    existing_coin_orders = [
                         o for o in open_orders
-                        if o.get("coin") == coin and o.get("reduceOnly", False)
+                        if o.get("coin") == coin
                     ]
-                    if len(existing_reduce_only) < 2:
-                        logger.info(f"TP/SL missing ({len(existing_reduce_only)} reduceOnly orders) — placing now")
+                    if len(existing_coin_orders) < 2:
+                        logger.info(f"TP/SL missing ({len(existing_coin_orders)} coin orders) — placing now")
                         _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
                     _state["last_order_check"] = now
 
@@ -1193,6 +1193,7 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
         for coin in coins:
             ctx = market_data.get(coin)
             future_to_coin[executor.submit(_run_single_coin_signal, coin, ctx)] = coin
+            time.sleep(2)
 
         try:
             for future in as_completed(future_to_coin, timeout=600):
