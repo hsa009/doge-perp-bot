@@ -1325,6 +1325,22 @@ def debug_ohlcv():
     return jsonify({"ok": False, "rows": 0})
 
 
+@app.route("/api/v1/bot/debug-signal")
+def debug_signal():
+    coin = request.args.get("coin", "")
+    if not coin:
+        return jsonify({"error": "missing coin param"}), 400
+    try:
+        sig = _run_single_coin_signal(coin)
+        if sig is None:
+            return jsonify({"ok": False, "error": "signal is None"})
+        return jsonify({"ok": True, "direction": sig.get("direction"), "confidence": sig.get("confidence"),
+                        "voters": sig.get("reasoning", "")[:200], "details": sig.get("_debug_calls", {})})
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": str(e), "traceback": traceback.format_exc()})
+
+
 @app.route("/api/v1/bot/last-error")
 def last_error():
     return jsonify({"error": None, "traceback": None, "timestamp": 0})
