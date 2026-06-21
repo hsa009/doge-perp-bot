@@ -38,13 +38,11 @@ COIN_LIST = os.environ.get("COIN_LIST", "PEPE,BONK,FLOKI,BOME,WIF,POPCAT,DOGE,SU
 
 
 def get_coin_gemini_keys(coin: str) -> list[str]:
-    keys = []
+    keys = list(FALLBACK_GEMINI_KEYS)
     for i in (1, 2, 3):
         val = os.environ.get(f"{coin}_GEMINI_KEY{i}", "")
-        if val:
+        if val and val not in keys:
             keys.append(val)
-    if not keys:
-        keys = list(FALLBACK_GEMINI_KEYS)
     if not keys:
         global_keys = GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
         keys = [k for k in global_keys if k]
