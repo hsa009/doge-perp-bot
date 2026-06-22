@@ -12,8 +12,12 @@ export default function Login() {
     e.preventDefault()
     setError("")
 
-    const resp = await fetch("/api/bot/status")
-    if (resp.status === 401) {
+    const resp = await fetch("/api/auth/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    })
+    if (!resp.ok) {
       setError("Wrong password")
       return
     }

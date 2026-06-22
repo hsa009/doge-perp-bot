@@ -676,7 +676,10 @@ def open_trade(signal: dict, coin: str = "DOGE") -> bool:
             tp_price = entry_price * (1 - tp_ratio)
             sl_price = entry_price * (1 + sl_ratio)
 
-        _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
+        try:
+            _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
+        except Exception as e:
+            logger.error(f"Initial TP/SL failed (trading loop will retry): {e}")
 
         try:
             db.save_trade({
@@ -1017,6 +1020,7 @@ def trading_loop():
 
             try:
                 _open_ok = open_trade(signal, coin)
+                _state["last_order_check"] = 0.0
                 if not _open_ok:
                     logger.error(f"open_trade returned False for {signal['direction']} {coin} — check balance/min size/HL rate limit")
                     try:
