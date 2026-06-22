@@ -1303,6 +1303,9 @@ def get_multi_asset_data():
             signals[coin] = {"direction": None, "confidence": None, "reasoning": None}
         if coin not in prompts:
             prompts[coin] = ""
+    # Strip any coins no longer in COIN_LIST
+    signals = {k: v for k, v in signals.items() if k in COIN_LIST}
+    prompts = {k: v for k, v in prompts.items() if k in COIN_LIST}
     return jsonify({"signals": signals, "prompts": prompts, "winner": winner})
 
 
@@ -1581,6 +1584,11 @@ def init_bot():
         seed_redis_config()
     except Exception as e:
         logger.error(f"Redis seed failed: {e}")
+    try:
+        # Clear stale multi-asset data from previous runs (coins may have changed)
+        redis.client.delete("multi_asset_signals", "multi_asset_prompts", "multi_asset_winner")
+    except Exception:
+        pass
     try:
         load_supabase_config()
     except Exception as e:
