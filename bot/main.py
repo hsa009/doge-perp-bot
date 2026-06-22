@@ -189,7 +189,15 @@ def force_trade():
 def set_tp_sl():
     try:
         cfg = get_runtime_config()
-        coin = cfg.get("active_asset", "DOGE")
+        # Find whatever coin has an open position
+        coin = cfg.get("active_asset", "")
+        all_pos = hl.get_all_positions()
+        for c in COIN_LIST:
+            if c in all_pos and float(all_pos[c]["szi"]) != 0:
+                coin = c
+                break
+        if not coin:
+            return jsonify({"ok": False, "error": "No coin with open position found"}), 400
         pos = hl.get_position(coin)
         if not pos or float(pos["szi"]) == 0:
             return jsonify({"ok": False, "error": "No open position"}), 400
@@ -808,8 +816,8 @@ def trading_loop():
                 notional = sz * entry_px
                 is_buy = float(pos["szi"]) > 0
 
-                # Immediate TP/SL check when a NEW position is detected
-                if not cached or abs(cached.get("size", 0)) < 1e-9:
+                # Immediate TP/SL check when position is first detected
+                if cached is None or abs(cached.get("size", 0)) < 1e-9:
                     logger.info(f"New position detected for {coin} — checking TP/SL immediately")
                     _state["last_order_check"] = 0.0
 
