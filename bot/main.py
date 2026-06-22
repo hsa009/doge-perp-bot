@@ -1037,15 +1037,10 @@ def trading_loop():
 
 def _fetch_ohlcv(coin: str) -> pd.DataFrame | None:
     try:
-        # Some coins (PEPE/BONK/FLOKI) use k-prefixed exchange names
         import httpx
-        if coin in ("PEPE", "BONK", "FLOKI"):
-            hl_coin = f"k{coin}"
-        else:
-            hl_coin = coin
         resp = httpx.post("https://api.hyperliquid.xyz/info", json={
             "type": "candleSnapshot",
-            "req": {"coin": hl_coin, "interval": "15m",
+            "req": {"coin": coin, "interval": "15m",
                      "startTime": int((time.time() - 86400) * 1000),
                      "endTime": int(time.time() * 1000)},
         }, timeout=30)
@@ -1074,13 +1069,9 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
     close_price = 0.0
     try:
         import httpx
-        if coin in ("PEPE", "BONK", "FLOKI"):
-            hl_coin = f"k{coin}"
-        else:
-            hl_coin = coin
         resp = httpx.post("https://api.hyperliquid.xyz/info", json={
             "type": "candleSnapshot",
-            "req": {"coin": hl_coin, "interval": "4h",
+            "req": {"coin": coin, "interval": "4h",
                      "startTime": int((time.time() - 604800) * 1000),
                      "endTime": int(time.time() * 1000)},
         }, timeout=30)

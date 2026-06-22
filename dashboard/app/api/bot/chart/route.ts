@@ -6,14 +6,9 @@ export const revalidate = 0
 
 const HL_API = "https://api.hyperliquid.xyz/info"
 
-const EXCHANGE_NAMES: Record<string, string> = {
-  PEPE: "kPEPE", BONK: "kBONK", FLOKI: "kFLOKI",
-}
-
 export async function GET(req: NextRequest) {
   try {
-    const rawCoin = req.nextUrl.searchParams.get("coin") || "DOGE"
-    const coin = EXCHANGE_NAMES[rawCoin] || rawCoin
+    const coin = req.nextUrl.searchParams.get("coin") || "DOGE"
     const interval = req.nextUrl.searchParams.get("interval") || "1m"
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") || "200"), 500)
 

@@ -34,11 +34,18 @@ FALLBACK_GEMINI_KEYS = [k.strip() for k in os.environ.get("FALLBACK_GEMINI_KEYS"
 
 ACTIVE_ASSET = os.environ.get("ACTIVE_ASSET", "DOGE")
 
-COIN_LIST = os.environ.get("COIN_LIST", "PEPE,BONK,FLOKI,BOME,WIF,POPCAT,DOGE,SUI,JUP,PYTH,SOL").split(",")
+REMOVED_COINS = ("PEPE", "BONK", "FLOKI", "BOME")
+
+COIN_LIST = os.environ.get("COIN_LIST", "WIF,POPCAT,DOGE,SUI,JUP,PYTH,SOL").split(",")
 
 
 def get_coin_gemini_keys(coin: str) -> list[str]:
     keys = list(FALLBACK_GEMINI_KEYS)
+    for rc in REMOVED_COINS:
+        for i in (1, 2):
+            val = os.environ.get(f"{rc}_GEMINI_KEY{i}", "")
+            if val and val not in keys:
+                keys.append(val)
     for i in (1, 2, 3):
         val = os.environ.get(f"{coin}_GEMINI_KEY{i}", "")
         if val and val not in keys:

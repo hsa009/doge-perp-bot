@@ -8,18 +8,12 @@ logger = logging.getLogger(__name__)
 HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info"
 
 
-def _hl_coin_name(coin: str) -> str:
-    if coin in ("PEPE", "BONK", "FLOKI"):
-        return f"k{coin}"
-    return coin
-
 def get_market_context(hl, coin: str = "DOGE",
                        l2_data: dict | None = None,
                        asset_ctx: dict | None = None) -> dict:
-    hl_coin = _hl_coin_name(coin)
     if l2_data is None:
         try:
-            l2_data = hl.info.l2_snapshot(hl_coin)
+            l2_data = hl.info.l2_snapshot(coin)
         except Exception as e:
             logger.warning(f"Failed to fetch L2 snapshot for {coin}: {e}")
             l2_data = None
@@ -47,7 +41,7 @@ def get_market_context(hl, coin: str = "DOGE",
             doge_ctx = asset_ctx
         else:
             for i, asset in enumerate(meta["universe"]):
-                if asset["name"] == hl_coin:
+                if asset["name"] == coin:
                     doge_ctx = ctxs[i]
                     break
     except Exception as e:
