@@ -1410,72 +1410,57 @@ def test_db():
 @app.route("/api/v1/test-gemini")
 def test_gemini():
     import os, json, httpx
-    from bot.signals.providers import _extract_json, _parse_response, GEMINI_MODEL
-    keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
+    from bot.signals.providers import GEMINI_MODEL
+    from bot.config import get_coin_gemini_keys, COIN_LIST, REMOVED_COINS
+
+    seen = set()
+    all_labels: list[tuple[str, str]] = []
+
+    for coin in COIN_LIST:
+        for i, k in enumerate(get_coin_gemini_keys(coin)):
+            if k and k not in seen:
+                seen.add(k)
+                all_labels.append((k, f"{coin}#{i}"))
+    for coin in REMOVED_COINS:
+        for i, k in enumerate(get_coin_gemini_keys(coin)):
+            if k and k not in seen:
+                seen.add(k)
+                all_labels.append((k, f"removed_{coin}#{i}"))
+    for i, k in enumerate(os.environ.get("GEMINI_API_KEYS", "").split(",")):
+        k = k.strip()
+        if k and k not in seen:
+            seen.add(k)
+            all_labels.append((k, f"global#{i}"))
+    gk = os.environ.get("GEMINI_API_KEY", "")
+    if gk and gk not in seen:
+        all_labels.append((gk, "GEMINI_API_KEY"))
+
     results = {}
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
-    
-    trade_prompt = """You are a SOL perpetual futures analyst. Analyze the technical data to decide LONG, SHORT, or WAIT.
-=== TECHNICAL ANALYSIS ===
-Current price: $63.96500
-Trend (EMA 9/21/50): bearish
-RSI(14): 36.9
-MACD histogram: 0.008691
-ADX(14): 20.5
-ATR(14): $0.92300
-Market regime: RANGING
-Respond ONLY with valid JSON:
-{"direction": "long"|"short"|"wait", "confidence": 0.0-1.0, "reasoning": "..."}"""
-    
-    for i, k in enumerate(keys[:2]):
-        key_label = f"key{i}"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={k}"
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+    for key, label in all_labels:
+        time.sleep(2)
+        url = f"{base_url}?key={key}"
+        r: dict = {"label": label}
         try:
-            payload = {
-                "contents": [{"parts": [{"text": trade_prompt}]}],
-                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400},
-                "safetySettings": [
-                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                ],
-            }
-            with httpx.Client(timeout=30) as client:
-                resp = client.post(url, json=payload)
-                r = {"http": resp.status_code}
-                if resp.status_code == 200:
-                    body = resp.json()
-                    candidates = body.get("candidates", [])
-                    if candidates:
-                        c = candidates[0]
-                        r["finish"] = c.get("finishReason")
-                        parts = c.get("content", {}).get("parts", [])
-                        if parts:
-                            raw = parts[0].get("text", "")
-                            r["raw_preview"] = raw[:300]
-                            ext = _extract_json(raw)
-                            r["extracted_preview"] = ext[:300]
-                            p = _parse_response(key_label, model, "test", ext)
-                            if p:
-                                r["parsed_ok"] = True
-                                r["direction"] = p["direction"]
-                            else:
-                                r["parsed_ok"] = False
-                                r["parse_error"] = "returned_none"
-                        else:
-                            r["no_parts"] = True
-                    else:
-                        r["no_candidates"] = True
-                else:
-                    r["error"] = resp.text[:200]
-                results[key_label] = r
+            resp = httpx.post(url, json={"contents": [{"parts": [{"text": "hi"}]}]}, timeout=15)
+            r["http"] = resp.status_code
+            if resp.status_code == 200:
+                body = resp.json()
+                candidates = body.get("candidates", [])
+                r["ok"] = bool(candidates)
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    r["reply"] = (parts[0]["text"][:80] if parts else None)
+            else:
+                r["error"] = (resp.json().get("error", {}).get("message", resp.text[:200]))
         except Exception as e:
-            results[key_label] = {"exc": str(e)}
+            r["exc"] = str(e)
+        results[label] = r
+
     return jsonify({
-        "key_count": len(keys),
+        "total": len(all_labels),
+        "working": sum(1 for v in results.values() if v.get("ok")),
         "results": results,
-        "model": model,
     })
 
 @app.route("/api/v1/test-groq")
