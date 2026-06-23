@@ -1458,6 +1458,15 @@ def test_gemini():
         "results": results,
     })
 
+@app.route("/api/v1/coin-key-map")
+def coin_key_map():
+    from bot.config import get_coin_gemini_keys, COIN_LIST
+    mapping = {}
+    for coin in COIN_LIST:
+        keys = get_coin_gemini_keys(coin)
+        mapping[coin] = {"keys": [k[:12]+"..."+k[-4:] for k in keys if k], "count": len(keys)}
+    return jsonify({"mapping": mapping, "total_coins": len(mapping)})
+
 @app.route("/api/v1/test-groq")
 def test_groq():
     import json, os, httpx
