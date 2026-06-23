@@ -1115,14 +1115,8 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
     if not market_context:
         market_context = get_market_context(hl, coin)
 
-    enabled_models = redis.get_enabled_models()
-    if not enabled_models or set(enabled_models) != set(signal_engine.MODEL_KEYS):
-        logger.warning(f"Model mismatch — reseeding for {coin}")
-        redis.set_model_defs(signal_engine.get_model_defs())
-        redis.set_enabled_models(list(signal_engine.MODEL_KEYS))
-        enabled_models = list(signal_engine.MODEL_KEYS)
-
-    groq_key = redis.get_config("groq_api_key", GROQ_API_KEY) or GROQ_API_KEY
+    enabled_models = []
+    groq_key = None
     gemini_keys = get_coin_gemini_keys(coin)
 
     closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
