@@ -1116,9 +1116,11 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
         market_context = get_market_context(hl, coin)
 
     from bot.config import COIN_MODEL_MAP
-    assigned = COIN_MODEL_MAP.get(coin, "llama-3.1-8b-instant")
-    enabled_models = [assigned]
-    logger.info(f"{coin}: using model={assigned}")
+    assigned_name = COIN_MODEL_MAP.get(coin, "llama-3.1-8b-instant")
+    enabled_models = [k for k, v in signal_engine.MODELS.items() if v.split(":")[-1] == assigned_name]
+    if not enabled_models:
+        enabled_models = list(signal_engine.MODEL_KEYS[:1])
+    logger.info(f"{coin}: model_key={enabled_models[0]} (model={assigned_name})")
 
     groq_key = redis.get_config("groq_api_key", GROQ_API_KEY) or GROQ_API_KEY
     gemini_keys = get_coin_gemini_keys(coin)
