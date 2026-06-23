@@ -240,7 +240,7 @@ def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -279,7 +279,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
                 _json.loads(extracted)
             except Exception as e:
                 parse_err = str(e)[:100]
-            parsed = _parse_response(key_label, "gemini-2.5-flash", key_label, extracted)
+            parsed = _parse_response(key_label, "gemini-2.0-flash", key_label, extracted)
             if parsed is None:
                 return {"_error": f"parse_fail_{parse_err or 'unknown'}"}
             return parsed

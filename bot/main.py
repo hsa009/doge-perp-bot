@@ -1414,7 +1414,7 @@ def test_gemini():
                 all_labels.append((k, f"{coin}#{i}"))
 
     results = {}
-    base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     for key, label in all_labels:
         time.sleep(2)
         url = f"{base_url}?key={key}"
