@@ -43,8 +43,13 @@ COIN_LIST = os.environ.get("COIN_LIST", "WIF,POPCAT,DOGE,SUI,JUP,PYTH,SOL").spli
 def get_coin_gemini_keys(coin: str) -> list[str]:
     if not PRIMARY_GEMINI_KEYS or coin not in COIN_LIST:
         return GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
-    idx = COIN_LIST.index(coin) % len(PRIMARY_GEMINI_KEYS)
-    return [PRIMARY_GEMINI_KEYS[idx]]
+    idx = COIN_LIST.index(coin)
+    if idx < len(PRIMARY_GEMINI_KEYS):
+        return [PRIMARY_GEMINI_KEYS[idx]]
+    fallback_idx = idx - len(PRIMARY_GEMINI_KEYS)
+    if FALLBACK_GEMINI_KEYS and fallback_idx < len(FALLBACK_GEMINI_KEYS):
+        return [FALLBACK_GEMINI_KEYS[fallback_idx]]
+    return GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
