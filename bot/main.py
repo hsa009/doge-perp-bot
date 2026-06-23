@@ -1183,27 +1183,18 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
         logger.warning(f"Async market data fetch failed ({e}) — falling back to per-coin sync fetch")
 
     signals: dict[str, dict] = {}
-    with ThreadPoolExecutor(max_workers=min(len(coins), 5)) as executor:
-        future_to_coin = {}
-        for coin in coins:
-            ctx = market_data.get(coin)
-            future_to_coin[executor.submit(_run_single_coin_signal, coin, ctx)] = coin
-            time.sleep(2)
-
+    for coin in coins:
+        ctx = market_data.get(coin)
         try:
-            for future in as_completed(future_to_coin, timeout=600):
-                coin = future_to_coin[future]
-                try:
-                    result = future.result(timeout=5)
-                    if result:
-                        signals[coin] = result
-                        logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
-                    else:
-                        logger.warning(f"{coin}: no signal returned")
-                except Exception as e:
-                    logger.exception(f"{coin}: signal error: {e}")
-        except TimeoutError:
-            logger.warning(f"Multi-asset signal run timed out — collected {len(signals)}/{len(coins)} signals")
+            result = _run_single_coin_signal(coin, ctx)
+            if result:
+                signals[coin] = result
+                logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
+            else:
+                logger.warning(f"{coin}: no signal returned")
+        except Exception as e:
+            logger.exception(f"{coin}: signal error: {e}")
+        time.sleep(15)
 
     logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signals of {len(coins)} ===")
     return signals
