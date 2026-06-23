@@ -489,11 +489,11 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     voter_tasks: list[tuple[str, callable, tuple]] = []
     for k in keys_to_run:
         voter_tasks.append((f"groq_{k}", call_groq, (k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)))
-    for i, gk in enumerate(gemini_keys):
-        fallback_for_this = list(gemini_keys[i+1:])
+    if gemini_keys:
+        fallback_pool = list(gemini_keys[1:])
         fb_lock = threading.Lock()
-        voter_tasks.append((f"gemini#{i}", call_gemini_http_with_retry,
-                            (gk, f"gemini#{i}", prompt, 2, fallback_for_this, fb_lock)))
+        voter_tasks.append(("gemini#0", call_gemini_http_with_retry,
+                            (gemini_keys[0], "gemini#0", prompt, 2, fallback_pool, fb_lock)))
 
     results: dict[str, dict | None] = {}
     executor = ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1))
