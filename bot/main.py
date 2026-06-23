@@ -804,7 +804,7 @@ def trading_loop():
                 redis.clear_close_position_signal()
                 _apply_pending_asset()
                 redis.clear_current_signal()
-                time.sleep(5)
+                time.sleep(15)
                 continue
 
             pos = _sniper_redis_cached(f"hl_pos_{coin}", lambda: hl.get_position(coin))
@@ -908,7 +908,7 @@ def trading_loop():
                     close_position_in_db(coin)
                     _apply_pending_asset()
                     redis.clear_current_signal()
-                time.sleep(5)
+                time.sleep(15)
             elif float(pos["szi"]) == 0:
                 cached = redis.get_position()
                 if cached and cached.get("size", 0) != 0:
@@ -945,7 +945,7 @@ def trading_loop():
 
             signal_age = time.time() - signal.get("timestamp", 0)
             if signal_age > AI_LOOP_INTERVAL:
-                time.sleep(5)
+                time.sleep(15)
                 continue
 
             if cfg["max_daily_loss_enabled"] == "1":
@@ -1405,7 +1405,7 @@ def test_gemini():
                 all_labels.append((k, f"{coin}#{i}"))
 
     results = {}
-    base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     for key, label in all_labels:
         time.sleep(2)
         url = f"{base_url}?key={key}"
