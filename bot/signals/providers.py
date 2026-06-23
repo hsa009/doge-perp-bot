@@ -297,10 +297,20 @@ def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str,
         last = call_gemini_http(api_key, key_label, prompt)
         if last and "_error" not in last:
             return last
-        if last and "HTTP_429" in str(last.get("_error", "")) and attempt < max_retries - 1:
-            logger.info(f"{key_label}: 429, retrying in {(attempt + 1)}s")
-            time.sleep((attempt + 1))
-            continue
+        if last and "HTTP_429" in str(last.get("_error", "")):
+            if attempt < max_retries - 1:
+                logger.info(f"{key_label}: 429, retrying in 60s")
+                time.sleep(60)
+                continue
+            if fallback_pool is not None and pool_lock is not None:
+                with pool_lock:
+                    if fallback_pool:
+                        fb_key = fallback_pool.pop(0)
+                        fb_label = f"{key_label}_fb"
+                        logger.info(f"{key_label}: switching to fallback key ({len(fallback_pool)} remaining)")
+                        return call_gemini_http_with_retry(fb_key, fb_label, prompt, max_retries,
+                                                           fallback_pool, pool_lock)
+            return last
         if fallback_pool is not None and pool_lock is not None:
             with pool_lock:
                 if fallback_pool:
