@@ -17,7 +17,6 @@ from bot.config import (
     LEVERAGE,
     MAX_DAILY_LOSS_USD,
     AI_LOOP_INTERVAL,
-    GROQ_API_KEY,
     ACTIVE_ASSET,
     COIN_LIST,
     get_coin_gemini_keys,
@@ -73,7 +72,6 @@ def bot_status():
         position = redis.get_position()
         cfg = get_runtime_config()
         cfg["ai_loop_interval"] = str(AI_LOOP_INTERVAL)
-        cfg["groq_api_key"] = redis.get_config("groq_api_key", GROQ_API_KEY)
         remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
         active_asset = cfg.get("active_asset", "DOGE")
         pending_asset = redis.get_config("pending_asset", "")
@@ -1404,8 +1402,7 @@ def test_db():
 @app.route("/api/v1/test-gemini")
 def test_gemini():
     import os, json, httpx
-    from bot.signals.providers import GEMINI_MODEL
-    from bot.config import get_coin_gemini_keys, COIN_LIST, REMOVED_COINS
+    from bot.config import get_coin_gemini_keys, COIN_LIST
 
     seen = set()
     all_labels: list[tuple[str, str]] = []
@@ -1415,23 +1412,9 @@ def test_gemini():
             if k and k not in seen:
                 seen.add(k)
                 all_labels.append((k, f"{coin}#{i}"))
-    for coin in REMOVED_COINS:
-        for i, k in enumerate(get_coin_gemini_keys(coin)):
-            if k and k not in seen:
-                seen.add(k)
-                all_labels.append((k, f"removed_{coin}#{i}"))
-    for i, k in enumerate(os.environ.get("GEMINI_API_KEYS", "").split(",")):
-        k = k.strip()
-        if k and k not in seen:
-            seen.add(k)
-            all_labels.append((k, f"global#{i}"))
-    gk = os.environ.get("GEMINI_API_KEY", "")
-    if gk and gk not in seen:
-        all_labels.append((gk, "GEMINI_API_KEY"))
 
     results = {}
-    from bot.config import GEMINI_MODEL as _GM
-    base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GM}:generateContent"
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     for key, label in all_labels:
         time.sleep(2)
         url = f"{base_url}?key={key}"
@@ -1466,34 +1449,6 @@ def coin_key_map():
         keys = get_coin_gemini_keys(coin)
         mapping[coin] = {"keys": [k[:12]+"..."+k[-4:] for k in keys if k], "count": len(keys)}
     return jsonify({"mapping": mapping, "total_coins": len(mapping)})
-
-@app.route("/api/v1/test-groq")
-def test_groq():
-    import json, os, httpx
-    groq_key = GROQ_API_KEY
-    try:
-        groq_key = redis.get_config("groq_api_key", GROQ_API_KEY)
-    except Exception:
-        pass
-    results = dict(groq_key_prefix=(groq_key[:20] + "..." if groq_key else "EMPTY"))
-    try:
-        payload = {
-            "model": "llama-3.3-70b-versatile",
-            "messages": [{"role": "user", "content": 'Reply JSON: {"direction": "long"}'}],
-            "temperature": 0.3,
-            "max_tokens": 300,
-        }
-        headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
-        with httpx.Client(timeout=15) as client:
-            resp = client.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
-            results["http_status"] = resp.status_code
-            if resp.status_code == 200:
-                results["content"] = resp.json()["choices"][0]["message"]["content"][:100]
-            else:
-                results["error"] = resp.text[:200]
-    except Exception as e:
-        results["exc"] = f"{type(e).__name__}: {e}"
-    return jsonify(results)
 
 
 def ai_loop():
@@ -1547,12 +1502,11 @@ def seed_redis_config():
         "max_daily_loss": str(MAX_DAILY_LOSS_USD),
         "max_daily_loss_enabled": "1",
         "force_trade_after_waits": "0",
-        "groq_api_key": GROQ_API_KEY,
         "active_asset": ACTIVE_ASSET,
     }
     for key, val in defaults.items():
         existing = redis.get_config(key, "")
-        if not existing or key == "groq_api_key":
+        if not existing:
             redis.set_config(key, val)
             logger.info(f"Seeded Redis config:{key} = {val}")
 

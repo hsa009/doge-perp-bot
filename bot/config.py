@@ -20,18 +20,7 @@ MIN_CONFIDENCE = float(os.environ.get("MIN_CONFIDENCE", "0.65"))
 LEVERAGE = int(os.environ.get("LEVERAGE", "10"))
 MAX_DAILY_LOSS_USD = float(os.environ.get("MAX_DAILY_LOSS_USD", "2.0"))
 
-AI_MODELS = os.environ.get(
-    "AI_MODELS",
-    "groq:llama-3.3-70b-versatile,groq:llama-3.1-8b-instant",
-)
 AI_LOOP_INTERVAL = int(os.environ.get("AI_LOOP_INTERVAL", "600"))
-
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_API_KEYS = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-FALLBACK_GEMINI_KEYS = [k.strip() for k in os.environ.get("FALLBACK_GEMINI_KEYS", "").split(",") if k.strip()]
-PRIMARY_GEMINI_KEYS = [k.strip() for k in os.environ.get("PRIMARY_GEMINI_KEYS", "").split(",") if k.strip()]
 
 ACTIVE_ASSET = os.environ.get("ACTIVE_ASSET", "DOGE")
 
@@ -41,15 +30,9 @@ COIN_LIST = os.environ.get("COIN_LIST", "WIF,POPCAT,DOGE,SUI,JUP,PYTH,SOL").spli
 
 
 def get_coin_gemini_keys(coin: str) -> list[str]:
-    if not PRIMARY_GEMINI_KEYS or coin not in COIN_LIST:
-        return GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
-    idx = COIN_LIST.index(coin)
-    if idx < len(PRIMARY_GEMINI_KEYS):
-        return [PRIMARY_GEMINI_KEYS[idx]]
-    fallback_idx = idx - len(PRIMARY_GEMINI_KEYS)
-    if FALLBACK_GEMINI_KEYS and fallback_idx < len(FALLBACK_GEMINI_KEYS):
-        return [FALLBACK_GEMINI_KEYS[fallback_idx]]
-    return GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
+    primary = os.environ.get(f"{coin}_GEMINI_KEY", "")
+    backup = os.environ.get(f"{coin}_GEMINI_BACKUP", "")
+    return [k for k in [primary, backup] if k]
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 

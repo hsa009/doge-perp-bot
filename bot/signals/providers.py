@@ -9,16 +9,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import httpx
 import pandas as pd
 
-from bot.config import AI_MODELS, GROQ_API_KEY, GEMINI_API_KEY, GEMINI_API_KEYS, GEMINI_MODEL, FALLBACK_GEMINI_KEYS
+from bot.config import AI_MODELS, get_coin_gemini_keys
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
 
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
-GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 VOTER_DEADLINE_S = 180
-GEMINI_429_RETRY_BACKOFF_S = 5
 
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
 
@@ -242,7 +240,7 @@ def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
-    url = f"{GEMINI_BASE}/{GEMINI_MODEL}:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -281,7 +279,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
                 _json.loads(extracted)
             except Exception as e:
                 parse_err = str(e)[:100]
-            parsed = _parse_response(key_label, GEMINI_MODEL, key_label, extracted)
+            parsed = _parse_response(key_label, "gemini-2.5-flash", key_label, extracted)
             if parsed is None:
                 return {"_error": f"parse_fail_{parse_err or 'unknown'}"}
             return parsed
@@ -300,8 +298,8 @@ def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str,
         if last and "_error" not in last:
             return last
         if last and "HTTP_429" in str(last.get("_error", "")) and attempt < max_retries - 1:
-            logger.info(f"{key_label}: 429, retrying in {GEMINI_429_RETRY_BACKOFF_S * (attempt + 1)}s")
-            time.sleep(GEMINI_429_RETRY_BACKOFF_S * (attempt + 1))
+            logger.info(f"{key_label}: 429, retrying in {(attempt + 1)}s")
+            time.sleep((attempt + 1))
             continue
         if fallback_pool is not None and pool_lock is not None:
             with pool_lock:
@@ -461,9 +459,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     cycle_id = uuid.uuid4().hex[:12]
     votes = {"long": 0, "short": 0, "wait": 0}
     details: list[dict] = []
-    gemini_keys = gemini_api_keys if gemini_api_keys is not None else GEMINI_API_KEYS
-    _gemini_fallback_pool = list(FALLBACK_GEMINI_KEYS)
-    _gemini_fallback_lock = threading.Lock()
+    gemini_keys = gemini_api_keys if gemini_api_keys is not None else []
 
     def _save_vote(entry: dict | None, voter_label: str, voter_type: str):
         if entry and "_error" not in entry and entry.get("direction"):
@@ -494,8 +490,10 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     for k in keys_to_run:
         voter_tasks.append((f"groq_{k}", call_groq, (k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)))
     for i, gk in enumerate(gemini_keys):
+        fallback_for_this = list(gemini_keys[i+1:])
+        fb_lock = threading.Lock()
         voter_tasks.append((f"gemini#{i}", call_gemini_http_with_retry,
-                            (gk, f"gemini#{i}", prompt, 2, _gemini_fallback_pool, _gemini_fallback_lock)))
+                            (gk, f"gemini#{i}", prompt, 2, fallback_for_this, fb_lock)))
 
     results: dict[str, dict | None] = {}
     executor = ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1))
