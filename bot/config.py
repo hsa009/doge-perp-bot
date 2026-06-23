@@ -38,22 +38,23 @@ REMOVED_COINS = ("PEPE", "BONK", "FLOKI", "BOME")
 
 COIN_LIST = os.environ.get("COIN_LIST", "WIF,POPCAT,DOGE,SUI,JUP,PYTH,SOL").split(",")
 
+COIN_MODEL_MAP = {
+    "WIF": "llama-3.3-70b-versatile",
+    "POPCAT": "llama-3.1-8b-instant",
+    "DOGE": "llama-3.3-70b-versatile",
+    "SUI": "llama-3.1-8b-instant",
+    "JUP": "llama-3.3-70b-versatile",
+    "PYTH": "llama-3.1-8b-instant",
+    "SOL": "llama-3.3-70b-versatile",
+}
+
 
 def get_coin_gemini_keys(coin: str) -> list[str]:
-    keys = list(FALLBACK_GEMINI_KEYS)
-    for rc in REMOVED_COINS:
-        for i in (1, 2):
-            val = os.environ.get(f"{rc}_GEMINI_KEY{i}", "")
-            if val and val not in keys:
-                keys.append(val)
-    for i in (1, 2, 3):
-        val = os.environ.get(f"{coin}_GEMINI_KEY{i}", "")
-        if val and val not in keys:
-            keys.append(val)
-    if not keys:
-        global_keys = GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
-        keys = [k for k in global_keys if k]
-    return keys
+    global_keys = GEMINI_API_KEYS or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
+    if not global_keys or coin not in COIN_LIST:
+        return []
+    idx = COIN_LIST.index(coin) % len(global_keys)
+    return [global_keys[idx]]
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 

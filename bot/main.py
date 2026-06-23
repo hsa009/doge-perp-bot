@@ -1115,12 +1115,10 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
     if not market_context:
         market_context = get_market_context(hl, coin)
 
-    enabled_models = redis.get_enabled_models()
-    if not enabled_models or set(enabled_models) != set(signal_engine.MODEL_KEYS):
-        logger.warning(f"Model mismatch — reseeding for {coin}")
-        redis.set_model_defs(signal_engine.get_model_defs())
-        redis.set_enabled_models(list(signal_engine.MODEL_KEYS))
-        enabled_models = list(signal_engine.MODEL_KEYS)
+    from bot.config import COIN_MODEL_MAP
+    assigned = COIN_MODEL_MAP.get(coin, "llama-3.1-8b-instant")
+    enabled_models = [assigned]
+    logger.info(f"{coin}: using model={assigned}")
 
     groq_key = redis.get_config("groq_api_key", GROQ_API_KEY) or GROQ_API_KEY
     gemini_keys = get_coin_gemini_keys(coin)
