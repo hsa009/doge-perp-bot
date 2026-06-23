@@ -289,37 +289,19 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
 
 
 def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str,
-                                 max_retries: int = 2,
+                                 max_retries: int = 1,
                                  fallback_pool: list[str] | None = None,
                                  pool_lock: "threading.Lock | None" = None) -> dict | None:
-    last = None
-    for attempt in range(max_retries):
-        last = call_gemini_http(api_key, key_label, prompt)
-        if last and "_error" not in last:
-            return last
-        if last and "HTTP_429" in str(last.get("_error", "")):
-            if attempt < max_retries - 1:
-                logger.info(f"{key_label}: 429, retrying in 60s")
-                time.sleep(60)
-                continue
-            if fallback_pool is not None and pool_lock is not None:
-                with pool_lock:
-                    if fallback_pool:
-                        fb_key = fallback_pool.pop(0)
-                        fb_label = f"{key_label}_fb"
-                        logger.info(f"{key_label}: switching to fallback key ({len(fallback_pool)} remaining)")
-                        return call_gemini_http_with_retry(fb_key, fb_label, prompt, max_retries,
-                                                           fallback_pool, pool_lock)
-            return last
-        if fallback_pool is not None and pool_lock is not None:
-            with pool_lock:
-                if fallback_pool:
-                    fb_key = fallback_pool.pop(0)
-                    fb_label = f"{key_label}_fb"
-                    logger.info(f"{key_label}: switching to fallback key ({len(fallback_pool)} remaining)")
-                    return call_gemini_http_with_retry(fb_key, fb_label, prompt, max_retries,
-                                                       fallback_pool, pool_lock)
+    last = call_gemini_http(api_key, key_label, prompt)
+    if last and "_error" not in last:
         return last
+    if fallback_pool is not None and pool_lock is not None:
+        with pool_lock:
+            if fallback_pool:
+                fb_key = fallback_pool.pop(0)
+                fb_label = f"{key_label}_fb"
+                logger.info(f"{key_label}: switching to fallback key ({len(fallback_pool)} remaining)")
+                return call_gemini_http_with_retry(fb_key, fb_label, prompt, 1)
     return last
 
 
@@ -503,7 +485,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
         fallback_pool = list(gemini_keys[1:])
         fb_lock = threading.Lock()
         voter_tasks.append(("gemini#0", call_gemini_http_with_retry,
-                            (gemini_keys[0], "gemini#0", prompt, 2, fallback_pool, fb_lock)))
+                            (gemini_keys[0], "gemini#0", prompt, 1, fallback_pool, fb_lock)))
 
     results: dict[str, dict | None] = {}
     executor = ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1))
