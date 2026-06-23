@@ -1436,7 +1436,8 @@ def test_gemini():
         all_labels.append((gk, "GEMINI_API_KEY"))
 
     results = {}
-    base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+    from bot.config import GEMINI_MODEL as _GM
+    base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GM}:generateContent"
     for key, label in all_labels:
         time.sleep(2)
         url = f"{base_url}?key={key}"
