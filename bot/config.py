@@ -21,6 +21,7 @@ LEVERAGE = int(os.environ.get("LEVERAGE", "10"))
 MAX_DAILY_LOSS_USD = float(os.environ.get("MAX_DAILY_LOSS_USD", "2.0"))
 
 AI_LOOP_INTERVAL = int(os.environ.get("AI_LOOP_INTERVAL", "600"))
+AI_MODELS = ""
 
 ACTIVE_ASSET = os.environ.get("ACTIVE_ASSET", "DOGE")
 
