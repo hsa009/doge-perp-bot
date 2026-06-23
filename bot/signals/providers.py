@@ -3,6 +3,7 @@ import uuid
 import time
 import random
 import threading
+import os
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
@@ -35,6 +36,26 @@ def _build_model_keys() -> dict[str, str]:
 
 MODELS: dict[str, str] = _build_model_keys()
 MODEL_KEYS: list[str] = list(MODELS.keys())
+
+
+_GEMINI_KEY_RING: list[str] = []
+_GEMINI_KEY_INDEX = 0
+_GEMINI_RING_LOCK = threading.Lock()
+
+
+def _build_gemini_key_ring() -> list[str]:
+    from bot.config import COIN_LIST
+    seen: set[str] = set()
+    keys: list[str] = []
+    for coin in COIN_LIST:
+        primary = os.environ.get(f"{coin}_GEMINI_KEY", "")
+        backup = os.environ.get(f"{coin}_GEMINI_BACKUP", "")
+        for k in [primary, backup]:
+            if k and k not in seen:
+                seen.add(k)
+                keys.append(k)
+    logger.info(f"Gemini key ring: {len(keys)} unique keys from {len(COIN_LIST)} coins")
+    return keys
 
 
 def get_model_defs() -> list[dict]:
@@ -288,20 +309,34 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         return {"_error": f"EXC_{e}"}
 
 
-def call_gemini_http_with_retry(api_key: str, key_label: str, prompt: str,
-                                 max_retries: int = 1,
-                                 fallback_pool: list[str] | None = None,
-                                 pool_lock: "threading.Lock | None" = None) -> dict | None:
-    last = call_gemini_http(api_key, key_label, prompt)
-    if last and "_error" not in last:
-        return last
-    if fallback_pool is not None and pool_lock is not None:
-        with pool_lock:
-            if fallback_pool:
-                fb_key = fallback_pool.pop(0)
-                fb_label = f"{key_label}_fb"
-                logger.info(f"{key_label}: switching to fallback key ({len(fallback_pool)} remaining)")
-                return call_gemini_http_with_retry(fb_key, fb_label, prompt, 1)
+def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | None:
+    global _GEMINI_KEY_RING, _GEMINI_KEY_INDEX
+
+    if not _GEMINI_KEY_RING:
+        _GEMINI_KEY_RING = _build_gemini_key_ring()
+    if not _GEMINI_KEY_RING:
+        logger.error("No Gemini keys available in key ring")
+        return None
+
+    last = None
+    for attempt in range(max_retries):
+        with _GEMINI_RING_LOCK:
+            ring_len = len(_GEMINI_KEY_RING)
+            key = _GEMINI_KEY_RING[_GEMINI_KEY_INDEX % ring_len]
+            idx = _GEMINI_KEY_INDEX
+            _GEMINI_KEY_INDEX += 1
+        key_label = f"gemini#{idx}"
+        last = call_gemini_http(key, key_label, prompt)
+        if last and "_error" not in last:
+            return last
+        if last and "HTTP_429" in str(last.get("_error", "")):
+            if attempt < max_retries - 1:
+                delay = min(2 ** attempt, 30)
+                logger.info(f"{key_label}: 429, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+                continue
+        else:
+            return last
     return last
 
 
@@ -482,10 +517,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     for k in keys_to_run:
         voter_tasks.append((f"groq_{k}", call_groq, (k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)))
     if gemini_keys:
-        fallback_pool = list(gemini_keys[1:])
-        fb_lock = threading.Lock()
-        voter_tasks.append(("gemini#0", call_gemini_http_with_retry,
-                            (gemini_keys[0], "gemini#0", prompt, 1, fallback_pool, fb_lock)))
+        voter_tasks.append(("gemini", call_gemini_http_with_retry, (prompt,)))
 
     results: dict[str, dict | None] = {}
     executor = ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1))
