@@ -325,10 +325,10 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | Non
         last = call_gemini_http(key, key_label, prompt)
         if last and "_error" not in last:
             return last
-        if last and "HTTP_429" in str(last.get("_error", "")):
+        if last and ("HTTP_429" in str(last.get("_error", "")) or "HTTP_503" in str(last.get("_error", ""))):
             if attempt < max_retries - 1:
                 delay = min(2 ** attempt, 30)
-                logger.info(f"{key_label}: 429, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
+                logger.info(f"{key_label}: retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
                 continue
         else:
