@@ -44,12 +44,13 @@ _GEMINI_RING_LOCK = threading.Lock()
 
 
 def _build_gemini_key_ring() -> list[str]:
+    from bot.config import COIN_LIST
     keys: list[str] = []
-    for coin in ("WIF", "POPCAT", "DOGE"):
+    for coin in COIN_LIST:
         k = os.environ.get(f"{coin}_GEMINI_KEY", "")
         if k:
             keys.append(k)
-    logger.info(f"Gemini key ring: {len(keys)} keys (WIF/POPCAT/DOGE primaries)")
+    logger.info(f"Gemini key ring: {len(keys)} keys from {len(COIN_LIST)} coins")
     return keys
 
 
