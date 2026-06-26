@@ -1113,7 +1113,7 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
     if not market_context:
         market_context = get_market_context(hl, coin)
 
-    enabled_models = []
+    enabled_models: list[str] | None = None
     groq_key = None
     gemini_keys = get_coin_gemini_keys(coin)
 

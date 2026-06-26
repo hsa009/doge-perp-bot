@@ -464,9 +464,9 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": [], "vote_tally": {}}
 
     if enabled_models is not None and not enabled_models:
-        logger.info("No AI models enabled — running Gemini-only")
+        logger.info("enabled_models=[] — running all models")
 
-    keys_to_run = [k for k in MODEL_KEYS if enabled_models is None or k in enabled_models]
+    keys_to_run = [k for k in MODEL_KEYS if enabled_models is None or not enabled_models or k in enabled_models]
     logger.info("MODEL_KEYS=%s enabled_models=%s keys_to_run=%s", MODEL_KEYS, enabled_models, keys_to_run)
     if not keys_to_run and not gemini_api_keys:
         logger.warning("No models or Gemini keys enabled — returning wait")
