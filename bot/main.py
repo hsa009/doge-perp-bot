@@ -1238,6 +1238,7 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
             "tally": tally,
             "timestamp": time.time(),
         })
+        redis.set_config("last_signal_gen_ts", str(time.time()))
         return None
 
     candidates.sort(key=lambda x: x.get("confidence", 0), reverse=True)
@@ -1247,6 +1248,7 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
 
     redis.set_config("active_asset", coin)
     redis.set_current_signal(winner)
+    redis.set_config("last_signal_gen_ts", str(time.time()))
     if winner.get("model_details"):
         redis.set_model_details(winner["model_details"])
 
@@ -1467,7 +1469,8 @@ def ai_loop():
                     continue
 
             last = redis.get_current_signal()
-            last_time = last.get("timestamp", 0) if last else 0
+            last_gen = float(redis.get_config("last_signal_gen_ts", "0") or "0")
+            last_time = last.get("timestamp", last_gen) if last else last_gen
             wait = max(0, last_time + AI_LOOP_INTERVAL - time.time())
             if wait > 0:
                 if wait < 60:

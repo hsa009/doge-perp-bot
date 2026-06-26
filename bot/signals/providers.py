@@ -16,6 +16,8 @@ from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 logger = logging.getLogger(__name__)
 
 GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_FALLBACK_MODEL = os.environ.get("GROQ_FALLBACK_MODEL", "qwen/qwen3.6-27b")
 
 VOTER_DEADLINE_S = 180
 
@@ -333,6 +335,13 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | Non
                 continue
         else:
             return last
+
+    if GROQ_API_KEY:
+        logger.info("Gemini retries exhausted — trying Groq fallback")
+        groq_result = call_groq("groq_fb", GROQ_FALLBACK_MODEL, prompt, 30, GROQ_API_KEY)
+        if groq_result and "_error" not in groq_result:
+            return groq_result
+        logger.warning("Groq fallback also failed")
     return last
 
 
