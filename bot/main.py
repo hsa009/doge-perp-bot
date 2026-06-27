@@ -1387,6 +1387,17 @@ def voter_health():
         return jsonify({"error": str(e), "db_enabled": db.enabled}), 500
 
 
+@app.route("/api/v1/bot/test-groq")
+def test_groq():
+    from bot.signals.providers import call_groq, GROQ_API_KEY, GROQ_FALLBACK_MODEL
+    result = call_groq("test", GROQ_FALLBACK_MODEL, "Respond with JSON only: {\"direction\": \"wait\", \"confidence\": 0.5, \"reasoning\": \"test\"}", 15, GROQ_API_KEY)
+    return jsonify({
+        "groq_key_set": bool(GROQ_API_KEY),
+        "groq_fallback_model": GROQ_FALLBACK_MODEL,
+        "call_groq_result": result,
+        "call_groq_type": type(result).__name__,
+    })
+
 @app.route("/api/v1/bot/test-db")
 def test_db():
     """Test DB connectivity and ai_votes table."""
