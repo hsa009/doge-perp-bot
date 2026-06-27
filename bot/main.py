@@ -107,7 +107,7 @@ def bot_status():
 @app.route("/api/v1/bot/debug")
 def bot_debug():
     try:
-        from bot.signals.providers import MODEL_KEYS
+        from bot.signals.providers import MODEL_KEYS, GROQ_API_KEY as GROQ_KEY_MODULE
         enabled = redis.get_enabled_models()
         defs = redis.get_model_defs()
         sig = redis.get_current_signal()
@@ -123,6 +123,9 @@ def bot_debug():
             "gemini_keys_count": len([k for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k]),
             "gemini_keys_str": os.environ.get("GEMINI_API_KEYS", "")[:80] or "per-coin",
             "ai_models": os.environ.get("AI_MODELS", "not set"),
+            "groq_key_set": bool(os.environ.get("GROQ_API_KEY", "")),
+            "groq_key_module_set": bool(GROQ_KEY_MODULE),
+            "groq_fallback_model": os.environ.get("GROQ_FALLBACK_MODEL", "not set"),
             "sniper": {
                 "high_conf_bypass": _HIGH_CONF_OBI_BYPASS,
                 "min_confidence": cfg_now.get("min_confidence"),
