@@ -212,6 +212,25 @@ class RedisClient:
         except Exception:
             return None
 
+    def set_enabled_coins(self, coins: list[str]):
+        if not self._ok():
+            return
+        self.client.set("config:enabled_coins", ",".join(coins))
+
+    def get_enabled_coins(self) -> list[str]:
+        if not self._ok():
+            from bot.config import COIN_LIST
+            return list(COIN_LIST)
+        try:
+            from bot.config import COIN_LIST
+            result = self.client.get("config:enabled_coins")
+            if result:
+                return [c.strip() for c in result.split(",") if c.strip()]
+            return list(COIN_LIST)
+        except Exception:
+            from bot.config import COIN_LIST
+            return list(COIN_LIST)
+
     def get_all_config(self) -> dict:
         keys = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled"]
         config = {}
