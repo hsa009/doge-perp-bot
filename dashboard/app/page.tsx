@@ -84,6 +84,7 @@ export default function Dashboard() {
   const [reasking, setReasking] = useState(false)
   const [forcing, setForcing] = useState(false)
   const [selectedCoin, setSelectedCoin] = useState("DOGE")
+  const [enabledCoins, setEnabledCoins] = useState<string[]>([])
   const [multiData, setMultiData] = useState<{ signals: Record<string, any> | null; prompts: Record<string, string> | null; winner: string }>({
     signals: null,
     prompts: null,
@@ -93,7 +94,13 @@ export default function Dashboard() {
   const fetchStatus = useCallback(async () => {
     try {
       const resp = await fetch("/api/bot/status")
-      if (resp.ok) setStatus(await resp.json())
+      if (resp.ok) {
+        const data = await resp.json()
+        setStatus(data)
+        if (data.config?.enabled_coins) {
+          setEnabledCoins(data.config.enabled_coins.split(",").filter(Boolean))
+        }
+      }
     } finally {
       setLoading(false)
     }
@@ -169,6 +176,21 @@ export default function Dashboard() {
     }
   }
 
+  const handleToggleCoin = async (coin: string, enable: boolean) => {
+    const current = enabledCoins.length > 0 ? enabledCoins : ["WIF", "POPCAT", "DOGE", "SUI", "JUP", "PYTH", "SOL"]
+    const updated = enable ? [...current, coin] : current.filter((c) => c !== coin)
+    setEnabledCoins(updated)
+    try {
+      await fetch("/api/bot/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled_coins: updated.join(",") }),
+      })
+    } catch (e) {
+      console.warn("Failed to update enabled_coins:", e)
+    }
+  }
+
   const pos = status?.position
   const hasPosition = pos && Math.abs(pos.size) > 0 && pos.entry_price > 0
   const markPrice = status?.mark_price ?? pos?.mark_price ?? null
@@ -230,6 +252,8 @@ export default function Dashboard() {
         winner={multiData.winner}
         selectedCoin={selectedCoin}
         onSelectCoin={setSelectedCoin}
+        enabledCoins={enabledCoins}
+        onToggleCoin={handleToggleCoin}
       />
 
       <PromptViewer prompts={multiData.prompts} selectedCoin={selectedCoin} />

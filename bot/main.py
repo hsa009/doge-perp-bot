@@ -418,6 +418,7 @@ def get_runtime_config() -> dict:
         "max_daily_loss_enabled": redis.get_config("max_daily_loss_enabled", "1"),
         "force_trade_after_waits": redis.get_config("force_trade_after_waits", "0"),
         "active_asset": redis.get_config("active_asset", ACTIVE_ASSET),
+        "enabled_coins": redis.get_config("enabled_coins", ",".join(COIN_LIST)),
     }
 
 
@@ -606,6 +607,11 @@ def safe_to_trade(coin: str, direction: str) -> bool:
 
         if not running:
             logger.warning("SAFE_TO_TRADE: ABORT — bot toggled OFF in dashboard")
+            return False
+
+        enabled_coins = redis.get_enabled_coins()
+        if coin not in enabled_coins:
+            logger.warning(f"SAFE_TO_TRADE: ABORT — {coin} is disabled")
             return False
 
         existing = hl.get_position(coin)
@@ -1175,6 +1181,12 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
     if coins is None:
         coins = COIN_LIST
 
+    enabled_coins = redis.get_enabled_coins()
+    coins = [c for c in coins if c in enabled_coins]
+    if not coins:
+        logger.info("All coins disabled — skipping signal generation")
+        return {}
+
     market_data: dict[str, dict] = {}
     try:
         market_data = fetch_all_market_data(coins)
@@ -1277,6 +1289,7 @@ def get_multi_asset_data():
     signals = {}
     prompts = {}
     winner = ""
+    enabled_coins = redis.get_enabled_coins()
     try:
         raw = redis.client.get("multi_asset_signals")
         if raw:
@@ -1296,8 +1309,11 @@ def get_multi_asset_data():
     except Exception:
         pass
     for coin in COIN_LIST:
+        disabled = coin not in enabled_coins
         if coin not in signals:
-            signals[coin] = {"direction": None, "confidence": None, "reasoning": None}
+            signals[coin] = {"direction": None, "confidence": None, "reasoning": "Disabled" if disabled else None, "disabled": disabled}
+        else:
+            signals[coin]["disabled"] = disabled
         if coin not in prompts:
             prompts[coin] = ""
     # Strip any coins no longer in COIN_LIST
