@@ -336,9 +336,11 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | Non
         else:
             return last
 
+    logger.info(f"GROQ_FALLBACK: GROQ_API_KEY={bool(GROQ_API_KEY)} len={len(GROQ_API_KEY) if GROQ_API_KEY else 0} model={GROQ_FALLBACK_MODEL}")
     if GROQ_API_KEY:
         logger.info("Gemini retries exhausted — trying Groq fallback")
         groq_result = call_groq("groq_fb", GROQ_FALLBACK_MODEL, prompt, 30, GROQ_API_KEY)
+        logger.info(f"GROQ_FALLBACK: call_groq returned type={type(groq_result).__name__} result={groq_result}")
         if groq_result and "_error" not in groq_result:
             return groq_result
         logger.warning("Groq fallback also failed")
