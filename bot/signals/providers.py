@@ -266,11 +266,8 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
                 return {"_error": f"HTTP_{resp.status_code}"}
             body = resp.json()
             content = body["choices"][0]["message"]["content"]
-            logger.info(f"{key_label}: raw_content_len={len(content)} content_preview={content[:200]!r}")
             extracted = _extract_json(content)
-            logger.info(f"{key_label}: extracted_len={len(extracted)} extracted_preview={extracted[:200]!r}")
             parsed = _parse_response(key_label, model, key_label, extracted)
-            logger.info(f"{key_label}: parsed={parsed}")
             return parsed
     except Exception as e:
         logger.warning(f"{key_label}: {e}")
@@ -543,8 +540,6 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             key_label=f"{coin}_secondary",
             timeout=30,
         )
-        import json as _json
-        logger.info(f"secondary:{coin}: raw_result={_json.dumps(result, default=str)}")
         return result
 
     if secondary_key:

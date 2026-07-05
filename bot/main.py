@@ -1383,34 +1383,6 @@ def voter_health():
         return jsonify({"error": str(e), "db_enabled": db.enabled}), 500
 
 
-@app.route("/api/v1/bot/test-secondary")
-def test_secondary():
-    """Test the secondary provider for a given coin."""
-    from bot.signals.providers import call_openai_compat, SECONDARY_PROVIDERS
-    coin = request.args.get("coin", "WIF")
-    provider_info = SECONDARY_PROVIDERS.get(coin)
-    if not provider_info:
-        return jsonify({"error": f"no provider for {coin}"})
-    api_key = os.environ.get(provider_info["env_var"], "")
-    prompt = "Respond ONLY with valid JSON: {\"direction\": \"wait\", \"confidence\": 0.5, \"reasoning\": \"test\"}"
-    result = call_openai_compat(
-        provider_info["base_url"],
-        api_key,
-        provider_info["model"],
-        prompt,
-        key_label=f"test_{coin}",
-        timeout=30,
-    )
-    return jsonify({
-        "coin": coin,
-        "provider": provider_info["provider"],
-        "model": provider_info["model"],
-        "env_var": provider_info["env_var"],
-        "env_var_set": bool(api_key),
-        "env_var_len": len(api_key),
-        "result": result,
-    })
-
 @app.route("/api/v1/bot/test-db")
 def test_db():
     """Test DB connectivity and ai_votes table."""
