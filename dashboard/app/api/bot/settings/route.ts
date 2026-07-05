@@ -9,7 +9,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || ""
 const SUPABASE_KEY = process.env.SUPABASE_KEY || ""
 
 const VALID_ASSETS = ["DOGE", "SOL"]
-const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "force_trade_after_waits", "groq_api_key", "gemini_api_key", "active_asset", "enabled_coins"]
+const ALLOWED = ["tp_usd", "sl_usd", "trade_amount", "leverage", "min_confidence", "max_daily_loss", "max_daily_loss_enabled", "force_trade_after_waits", "gemini_api_key", "active_asset", "enabled_coins"]
 
 export async function GET() {
   try {

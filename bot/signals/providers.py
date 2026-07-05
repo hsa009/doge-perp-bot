@@ -15,9 +15,27 @@ from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
 
-GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_FALLBACK_MODEL = os.environ.get("GROQ_FALLBACK_MODEL", "qwen/qwen3.6-27b")
+from bot.signals.throttle import ProviderThrottle
+
+SECONDARY_PROVIDERS: dict[str, dict] = {
+    "WIF":    {"base_url": "https://api.sambanova.ai/v1/chat/completions", "env_var": "WIF_SAMBANOVA_KEY",    "model": "Qwen/Qwen3-32B",   "provider": "SambaNova", "throttle": "sambanova"},
+    "POPCAT": {"base_url": "https://api.sambanova.ai/v1/chat/completions", "env_var": "POPCAT_SAMBANOVA_KEY", "model": "Qwen/Qwen3-32B",   "provider": "SambaNova", "throttle": "sambanova"},
+    "DOGE":   {"base_url": "https://api.cerebras.ai/v1/chat/completions",  "env_var": "DOGE_CEREBRAS_KEY",    "model": "qwen3-8b",         "provider": "Cerebras",  "throttle": "cerebras"},
+    "SUI":    {"base_url": "https://api.cerebras.ai/v1/chat/completions",  "env_var": "SUI_CEREBRAS_KEY",     "model": "qwen3-8b",         "provider": "Cerebras",  "throttle": "cerebras"},
+    "SOL":    {"base_url": "https://api.groq.com/openai/v1/chat/completions", "env_var": "SOL_GROQ_KEY",     "model": "qwen/qwen3.6-27b", "provider": "Groq",      "throttle": "groq"},
+    "JUP":    {"base_url": "https://api.groq.com/openai/v1/chat/completions", "env_var": "JUP_GROQ_KEY",     "model": "qwen/qwen3.6-27b", "provider": "Groq",      "throttle": "groq"},
+    "PYTH":   {"base_url": "https://api.groq.com/openai/v1/chat/completions", "env_var": "PYTH_GROQ_KEY",    "model": "qwen/qwen3.6-27b", "provider": "Groq",      "throttle": "groq"},
+}
+
+_provider_throttles: dict[str, ProviderThrottle] = {
+    "sambanova": ProviderThrottle(1000),
+    "cerebras":  ProviderThrottle(2000),
+    "groq":      ProviderThrottle(2000),
+}
+
+SECONDARY_PROVIDER_INFO: dict[str, str] = {coin: info["provider"] for coin, info in SECONDARY_PROVIDERS.items()}
+
+MAX_SIGNAL_AGE_S = 4.0
 
 VOTER_DEADLINE_S = 180
 
@@ -222,11 +240,9 @@ Respond ONLY with valid JSON. Keep reasoning under 50 words:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "[Include calculated TP% vs ATR% here] ..."}}"""
 
 
-def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key: str | None = None) -> dict | None:
-    if not groq_api_key:
-        groq_api_key = GROQ_API_KEY
-    if not groq_api_key:
-        logger.warning(f"{key}: no Groq API key configured")
+def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key_label: str = "secondary", timeout: int = 30) -> dict | None:
+    if not api_key:
+        logger.warning(f"{key_label}: no API key configured")
         return None
 
     payload = {
@@ -236,23 +252,23 @@ def call_groq(key: str, model: str, prompt: str, timeout: int = 15, groq_api_key
         "max_tokens": 300,
     }
     headers = {
-        "Authorization": f"Bearer {groq_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     try:
         with httpx.Client(timeout=timeout) as client:
-            resp = client.post(GROQ_BASE, json=payload, headers=headers)
+            resp = client.post(base_url, json=payload, headers=headers)
             if resp.status_code == 429:
-                logger.warning(f"{key}: 429 rate limited")
+                logger.warning(f"{key_label}: 429 rate limited")
                 return None
             if resp.status_code != 200:
-                logger.warning(f"{key}: HTTP {resp.status_code} {resp.text[:200]}")
+                logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
                 return None
             body = resp.json()
             content = body["choices"][0]["message"]["content"]
-            return _parse_response(key, model, model, content)
+            return _parse_response(key_label, model, key_label, content)
     except Exception as e:
-        logger.debug(f"{key}: {e}")
+        logger.debug(f"{key_label}: {e}")
         return None
 
 
@@ -336,14 +352,6 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | Non
         else:
             return last
 
-    logger.info(f"GROQ_FALLBACK: GROQ_API_KEY={bool(GROQ_API_KEY)} len={len(GROQ_API_KEY) if GROQ_API_KEY else 0} model={GROQ_FALLBACK_MODEL}")
-    if GROQ_API_KEY:
-        logger.info("Gemini retries exhausted — trying Groq fallback")
-        groq_result = call_groq("groq_fb", GROQ_FALLBACK_MODEL, prompt, 30, GROQ_API_KEY)
-        logger.info(f"GROQ_FALLBACK: call_groq returned type={type(groq_result).__name__} result={groq_result}")
-        if groq_result and "_error" not in groq_result:
-            return groq_result
-        logger.warning("Groq fallback also failed")
     return last
 
 
@@ -450,7 +458,6 @@ Respond ONLY with valid JSON:
 def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: list[str] | None = None,
                    tp_usd: float = 3.0, sl_usd: float = 3.0,
                    leverage: int = 10, trade_amount: float = 10.0,
-                   groq_api_key: str | None = None,
                    last_signal_direction: str | None = None,
                    last_signal_reasoning: str | None = None,
                    consecutive_waits: int = 0,
@@ -461,19 +468,11 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                    macro_trend: str = "mixed",
                    liq_price: float = 0.0,
                    liq_dist_pct: float = 0.0) -> dict:
+    signal_start = time.time()
+
     if ohlcv.empty or len(ohlcv) < 50:
         logger.warning("Not enough data for AI signal")
         return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "Insufficient data", "model_details": [], "vote_tally": {}}
-
-    if enabled_models is not None and not enabled_models:
-        logger.info("No AI models enabled — running Gemini-only")
-
-    keys_to_run = [k for k in MODEL_KEYS if enabled_models is None or k in enabled_models]
-    logger.info("MODEL_KEYS=%s enabled_models=%s keys_to_run=%s", MODEL_KEYS, enabled_models, keys_to_run)
-    if not keys_to_run and not gemini_api_keys:
-        logger.warning("No models or Gemini keys enabled — returning wait")
-        return {"direction": "wait", "confidence": 0.3, "regime": "UNKNOWN", "reasoning": "All models disabled", "model_details": [],
-                "_debug_enabled_models": enabled_models, "_debug_model_keys": MODEL_KEYS, "vote_tally": {}}
 
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
@@ -491,59 +490,76 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                           macro_trend=macro_trend, liq_price=liq_price, liq_dist_pct=liq_dist_pct)
 
     cycle_id = uuid.uuid4().hex[:12]
-    votes = {"long": 0, "short": 0, "wait": 0}
-    details: list[dict] = []
     gemini_keys = gemini_api_keys if gemini_api_keys is not None else []
-
-    def _save_vote(entry: dict | None, voter_label: str, voter_type: str):
-        if entry and "_error" not in entry and entry.get("direction"):
-            votes[entry["direction"]] += 1
-            details.append(entry)
-        if db and db.enabled:
-            try:
-                safe_dir = entry.get("direction") if entry and isinstance(entry, dict) else None
-                safe_conf = entry.get("confidence") if entry and isinstance(entry, dict) else None
-                safe_reas = entry.get("reasoning", "")[:500] if entry and isinstance(entry, dict) else None
-                data = {
-                    "cycle_id": str(uuid.uuid4()),
-                    "coin": coin,
-                    "voter": voter_label,
-                    "direction": safe_dir,
-                    "confidence": safe_conf,
-                    "reasoning": safe_reas,
-                    "error": None if safe_dir else "call_failed",
-                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                }
-                db.client.table("ai_votes").insert(data).execute()
-            except Exception as e:
-                _debug_calls[f"save_{voter_label}"] = f"DB_ERR: {e}"
 
     _debug_calls: dict[str, str] = {}
 
+    # --- Secondary provider setup ---
+    provider_info = SECONDARY_PROVIDERS.get(coin)
+    secondary_key = ""
+    if provider_info:
+        secondary_key = os.environ.get(provider_info["env_var"], "")
+    if secondary_key:
+        _debug_calls["secondary"] = f"provider={provider_info['provider']}"
+    else:
+        _debug_calls["secondary"] = "no_key"
+
+    # --- Build voter tasks ---
     voter_tasks: list[tuple[str, callable, tuple]] = []
-    for k in keys_to_run:
-        voter_tasks.append((f"groq_{k}", call_groq, (k, MODELS[k].split(":")[-1], prompt, 15, groq_api_key)))
+
+    # Gemini voter
     if gemini_keys:
         voter_tasks.append(("gemini", call_gemini_http_with_retry, (prompt,)))
 
-    results: dict[str, dict | None] = {}
-    executor = ThreadPoolExecutor(max_workers=max(len(voter_tasks), 1))
-    try:
-        future_to_label = {}
-        for label, fn, args in voter_tasks:
-            time.sleep(random.uniform(0, 0.5))
-            future_to_label[executor.submit(fn, *args)] = label
+    # Secondary voter (with throttle, staleness check)
+    def _call_secondary() -> dict | None:
+        if not secondary_key or not provider_info:
+            return None
+        elapsed = time.time() - signal_start
+        throttle = _provider_throttles.get(provider_info["throttle"])
+        wait = throttle.acquire() if throttle else 0.0
+        if elapsed + wait > MAX_SIGNAL_AGE_S:
+            logger.info(f"secondary:{coin}: stale signal (elapsed={elapsed:.1f}s wait={wait:.1f}s > {MAX_SIGNAL_AGE_S}s) — dropping")
+            return {"_error": "STALE_DROPPED"}
+        if wait > 0:
+            time.sleep(wait)
+        return call_openai_compat(
+            provider_info["base_url"],
+            secondary_key,
+            provider_info["model"],
+            prompt,
+            key_label=f"{coin}_secondary",
+            timeout=30,
+        )
 
-        for future in as_completed(future_to_label, timeout=VOTER_DEADLINE_S):
-            label = future_to_label[future]
-            try:
-                results[label] = future.result()
-            except Exception as e:
-                results[label] = {"_error": f"EXC_{e}"}
-    except TimeoutError:
-        pass
-    finally:
-        executor.shutdown(wait=False)
+    if secondary_key:
+        voter_tasks.append(("secondary", _call_secondary, ()))
+
+    # --- Run voters concurrently ---
+    results: dict[str, dict | None] = {}
+    if voter_tasks:
+        executor = ThreadPoolExecutor(max_workers=len(voter_tasks))
+        try:
+            future_to_label = {}
+            for label, fn, args in voter_tasks:
+                time.sleep(random.uniform(0, 0.5))
+                future_to_label[executor.submit(fn, *args)] = label
+            for future in as_completed(future_to_label, timeout=VOTER_DEADLINE_S):
+                label = future_to_label[future]
+                try:
+                    results[label] = future.result()
+                except Exception as e:
+                    results[label] = {"_error": f"EXC_{e}"}
+        except TimeoutError:
+            pass
+        finally:
+            executor.shutdown(wait=False)
+
+    # --- Collect results ---
+    details: list[dict] = []
+
+    def _is_valid(entry: dict | None) -> bool:
+        return bool(entry and "_error" not in entry and entry.get("direction"))
 
     for label, result in results.items():
         if isinstance(result, dict) and "_error" in result:
@@ -552,49 +568,73 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             _debug_calls[label] = "ok"
         else:
             _debug_calls[label] = "returned_none"
-        voter_type = "groq" if label.startswith("groq_") else "gemini"
-        voter_name = label[len("groq_"):] if label.startswith("groq_") else label
-        _save_vote(result, voter_name, voter_type)
+        if _is_valid(result):
+            details.append(result)
+        if db and db.enabled:
+            try:
+                safe_dir = result.get("direction") if result and isinstance(result, dict) else None
+                safe_conf = result.get("confidence") if result and isinstance(result, dict) else None
+                safe_reas = result.get("reasoning", "")[:500] if result and isinstance(result, dict) else None
+                data = {
+                    "cycle_id": str(uuid.uuid4()),
+                    "coin": coin,
+                    "voter": label,
+                    "direction": safe_dir,
+                    "confidence": safe_conf,
+                    "reasoning": safe_reas,
+                    "error": None if safe_dir else "call_failed",
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                db.client.table("ai_votes").insert(data).execute()
+            except Exception as e:
+                _debug_calls[f"save_{label}"] = f"DB_ERR: {e}"
 
-    if not details:
-        logger.warning("All voters failed — returning wait")
-        return {"direction": "wait", "confidence": 0.3, "regime": regime, "reasoning": "AI models unavailable", "model_details": [], "prompt": prompt, "vote_tally": dict(votes), "cycle_id": cycle_id, "_debug_calls": _debug_calls}
+    # --- Consensus logic ---
+    gemini_result = results.get("gemini", {})
+    sec_result = results.get("secondary", {})
+    gemini_valid = _is_valid(gemini_result)
+    sec_valid = _is_valid(sec_result)
 
-    max_count = max(votes.values())
-    winners = [d for d, c in votes.items() if c == max_count]
     forced = False
-    non_wait_votes = None
-    max_count_nw = 0
+    winner = "wait"
+    confidence = 0.3
 
-    if consecutive_waits >= 3:
-        non_wait_votes = {w: c for w, c in votes.items() if w != "wait"}
-        if non_wait_votes:
-            max_count_nw = max(non_wait_votes.values())
-            winners = [w for w, c in non_wait_votes.items() if c == max_count_nw]
-            winner = winners[0]
+    if gemini_valid and sec_valid:
+        gemini_dir = gemini_result["direction"]
+        sec_dir = sec_result["direction"]
+        if gemini_dir == sec_dir:
+            winner = gemini_dir
+            confidence = (float(gemini_result.get("confidence", 0.5)) + float(sec_result.get("confidence", 0.5))) / 2.0
+            reasons = f"Consensus: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) + {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f})"
         else:
-            if regime.startswith("TRENDING_UP"):
-                winner = "long"
-            elif regime.startswith("TRENDING_DOWN"):
-                winner = "short"
-            else:
-                winner = "long"
+            reasons = f"Disagreement: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) vs {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f}) — defaulting to wait"
+    elif gemini_valid:
+        winner = gemini_result["direction"]
+        confidence = float(gemini_result.get("confidence", 0.5))
+        reasons = f"Gemini only: {gemini_result['direction'].upper()}({gemini_result['confidence']:.2f})"
+    else:
+        reasons = "No valid model responses"
+
+    # Force override for consecutive waits >= 3
+    if consecutive_waits >= 3 and winner == "wait":
         forced = True
-    elif len(winners) > 1:
-        winner = "wait"
-    else:
-        winner = winners[0]
+        if regime.startswith("TRENDING_UP"):
+            winner = "long"
+        elif regime.startswith("TRENDING_DOWN"):
+            winner = "short"
+        else:
+            winner = "long"
+        confidence = 0.25
+        _debug_calls["forced"] = "true"
 
-    total_voters = len(details)
-    if forced and non_wait_votes:
-        nw_total = sum(non_wait_votes.values())
-        confidence = max_count_nw / nw_total if nw_total > 0 else 0.0
-    else:
-        confidence = max_count / total_voters if total_voters > 0 else 0.0
+    vote_tally = {"long": 0, "short": 0, "wait": 0}
+    for d in details:
+        vote_tally[d["direction"]] = vote_tally.get(d["direction"], 0) + 1
 
-    reasons = "; ".join(f"{d['name']}: {d['direction']} ({d['confidence']:.2f})" for d in details)
+    logger.info(f"{coin}: consensus={winner} conf={confidence:.2f} gemini={gemini_valid} secondary={sec_valid} cycle={cycle_id}")
 
-    logger.info(f"Vote: winner={winner} conf={confidence:.2f} voters={total_voters} tally={dict(votes)} cycle={cycle_id}")
+    secondary_provider = provider_info["provider"] if provider_info and secondary_key else None
+
     return {
         "direction": winner,
         "confidence": round(min(confidence, 0.95), 2),
@@ -602,10 +642,11 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
         "reasoning": reasons,
         "prompt": prompt,
         "model_details": details,
-        "vote_tally": dict(votes),
+        "vote_tally": vote_tally,
         "cycle_id": cycle_id,
         "_debug_calls": _debug_calls,
         "_forced": forced,
+        "secondary_provider": secondary_provider,
     }
 
 

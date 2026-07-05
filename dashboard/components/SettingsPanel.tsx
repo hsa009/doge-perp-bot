@@ -12,7 +12,6 @@ interface Props {
     max_daily_loss: string
     max_daily_loss_enabled: string
     force_trade_after_waits?: string
-    groq_api_key: string
   }
   onSaved: () => void
 }
@@ -26,7 +25,6 @@ export default function SettingsPanel({ config, onSaved }: Props) {
   const [maxLoss, setMaxLoss] = useState(config.max_daily_loss)
   const [maxLossEnabled, setMaxLossEnabled] = useState(config.max_daily_loss_enabled === "1")
   const [forceTrade, setForceTrade] = useState(config.force_trade_after_waits === "1")
-  const [groqKey, setGroqKey] = useState(config.groq_api_key)
   const [saving, setSaving] = useState(false)
 
   const handleSave = async () => {
@@ -44,7 +42,6 @@ export default function SettingsPanel({ config, onSaved }: Props) {
           max_daily_loss: maxLoss,
           max_daily_loss_enabled: maxLossEnabled ? "1" : "0",
           force_trade_after_waits: forceTrade ? "1" : "0",
-          groq_api_key: groqKey,
         }),
       })
       onSaved()
@@ -116,12 +113,6 @@ export default function SettingsPanel({ config, onSaved }: Props) {
             {saving ? "Saving..." : "Save Settings"}
           </button>
         </div>
-      </div>
-      <div className="mt-3">
-        <label className="block text-xs text-zinc-500">Groq API Key</label>
-        <input type="text" value={groqKey} onChange={(e) => setGroqKey(e.target.value)}
-          placeholder="gsk_..."
-          className={`${inputClass} mt-1`} />
       </div>
     </div>
   )
