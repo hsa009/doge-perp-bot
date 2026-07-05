@@ -187,6 +187,10 @@ def force_trade():
 def set_tp_sl():
     try:
         cfg = get_runtime_config()
+        body = request.get_json(silent=True) or {}
+        # Override tp_usd/sl_usd from request body if provided (per-position override)
+        tp_usd = float(body.get("tp_usd", cfg["tp_usd"]))
+        sl_usd = float(body.get("sl_usd", cfg["sl_usd"]))
         # Find whatever coin has an open position
         coin = cfg.get("active_asset", "")
         all_pos = hl.get_all_positions()
@@ -203,8 +207,8 @@ def set_tp_sl():
         entry_px = float(pos["entryPx"])
         sz = abs(float(pos["szi"]))
         notional = sz * entry_px
-        tp_ratio = cfg["tp_usd"] / notional
-        sl_ratio = cfg["sl_usd"] / notional
+        tp_ratio = tp_usd / notional
+        sl_ratio = sl_usd / notional
         if is_buy:
             tp_price = entry_px * (1 + tp_ratio)
             sl_price = entry_px * (1 - sl_ratio)
@@ -221,7 +225,9 @@ def set_tp_sl():
             "tp_price": tp_price,
             "sl_price": sl_price,
         })
-        return jsonify({"ok": True, "tp_price": tp_price, "sl_price": sl_price, "results": results})
+        return jsonify({"ok": True, "coin": coin, "entry_px": entry_px, "notional": notional,
+                        "tp_usd": tp_usd, "sl_usd": sl_usd,
+                        "tp_price": tp_price, "sl_price": sl_price, "results": results})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
