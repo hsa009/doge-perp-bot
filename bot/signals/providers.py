@@ -249,7 +249,7 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.3,
-        "max_tokens": 300,
+        "max_tokens": 500,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -356,34 +356,41 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | Non
 
 
 def _extract_json(text: str) -> str:
-    idx = text.find("{")
-    if idx == -1:
-        return text
-    text = text[idx:]
-    depth = 0
-    in_string = False
-    escaped = False
-    end = 0
-    for i, ch in enumerate(text):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
+    # Find all balanced JSON objects and return the last valid one
+    candidates: list[str] = []
+    i = 0
+    while True:
+        start = text.find("{", i)
+        if start == -1:
+            break
+        depth = 0
+        in_string = False
+        escaped = False
+        end = 0
+        for j in range(start, len(text)):
+            ch = text[j]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
             elif ch == '"':
-                in_string = False
-        elif ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-    if end == 0:
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j + 1
+                    break
+        if end > 0:
+            candidates.append(text[start:end])
+        i = start + 1 if end <= 0 else end
+    if not candidates:
         return text
-    return _clean_json(text[:end])
+    return _clean_json(candidates[-1])
 
 
 def _clean_json(s: str) -> str:
