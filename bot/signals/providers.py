@@ -266,9 +266,9 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
                 return {"_error": f"HTTP_{resp.status_code}"}
             body = resp.json()
             content = body["choices"][0]["message"]["content"]
-            logger.info(f"{key_label}: raw_content_len={len(content)} content_preview={content[:300]}")
+            logger.info(f"{key_label}: raw_content_len={len(content)} content_preview={content[:200]!r}")
             extracted = _extract_json(content)
-            logger.info(f"{key_label}: extracted_len={len(extracted)} extracted_preview={extracted[:200]}")
+            logger.info(f"{key_label}: extracted_len={len(extracted)} extracted_preview={extracted[:200]!r}")
             parsed = _parse_response(key_label, model, key_label, extracted)
             logger.info(f"{key_label}: parsed={parsed}")
             return parsed
