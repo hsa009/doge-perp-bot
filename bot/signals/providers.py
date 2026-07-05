@@ -266,8 +266,12 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
                 return {"_error": f"HTTP_{resp.status_code}"}
             body = resp.json()
             content = body["choices"][0]["message"]["content"]
+            logger.info(f"{key_label}: raw_content_len={len(content)} content_preview={content[:300]}")
             extracted = _extract_json(content)
-            return _parse_response(key_label, model, key_label, extracted)
+            logger.info(f"{key_label}: extracted_len={len(extracted)} extracted_preview={extracted[:200]}")
+            parsed = _parse_response(key_label, model, key_label, extracted)
+            logger.info(f"{key_label}: parsed={parsed}")
+            return parsed
     except Exception as e:
         logger.warning(f"{key_label}: {e}")
         return {"_error": f"EXC_{e}"}
@@ -531,7 +535,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             return {"_error": "STALE_DROPPED"}
         if wait > 0:
             time.sleep(wait)
-        return call_openai_compat(
+        result = call_openai_compat(
             provider_info["base_url"],
             secondary_key,
             provider_info["model"],
@@ -539,6 +543,9 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             key_label=f"{coin}_secondary",
             timeout=30,
         )
+        import json as _json
+        logger.info(f"secondary:{coin}: raw_result={_json.dumps(result, default=str)}")
+        return result
 
     if secondary_key:
         voter_tasks.append(("secondary", _call_secondary, ()))
