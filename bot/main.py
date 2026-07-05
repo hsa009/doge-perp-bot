@@ -216,6 +216,9 @@ def set_tp_sl():
             tp_price = entry_px * (1 - tp_ratio)
             sl_price = entry_px * (1 + sl_ratio)
         results = _place_tp_sl(coin, is_buy, notional, tp_price, sl_price)
+        # Store per-position tp_usd/sl_usd so the monitoring loop uses them
+        redis.set_config(f"position_tp_usd:{coin}", str(tp_usd))
+        redis.set_config(f"position_sl_usd:{coin}", str(sl_usd))
         redis.set_position({
             "coin": coin,
             "direction": "long" if is_buy else "short",
@@ -876,8 +879,12 @@ def trading_loop():
                 # V4: Throttled TP/SL order verification (every 30s)
                 now = time.monotonic()
                 if now - _state.get("last_order_check", -999) > 30.0:
-                    tp_ratio = cfg["tp_usd"] / notional
-                    sl_ratio = cfg["sl_usd"] / notional
+                    pos_tp_usd = redis.get_config(f"position_tp_usd:{coin}", "")
+                    pos_sl_usd = redis.get_config(f"position_sl_usd:{coin}", "")
+                    tp_usd = float(pos_tp_usd) if pos_tp_usd else cfg["tp_usd"]
+                    sl_usd = float(pos_sl_usd) if pos_sl_usd else cfg["sl_usd"]
+                    tp_ratio = tp_usd / notional
+                    sl_ratio = sl_usd / notional
                     if is_buy:
                         tp_price = entry_px * (1 + tp_ratio)
                         sl_price = entry_px * (1 - sl_ratio)
@@ -909,6 +916,8 @@ def trading_loop():
                         "account_value": account_value,
                         "peak_pnl": current_peak,
                         "floor": floor,
+                        "tp_price": cached.get("tp_price") if cached else None,
+                        "sl_price": cached.get("sl_price") if cached else None,
                     })
                     _state["last_pos_write"] = now
 
