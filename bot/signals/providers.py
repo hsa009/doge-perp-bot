@@ -249,7 +249,7 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.3,
-        "max_tokens": 1000,
+        "max_tokens": 2048,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
