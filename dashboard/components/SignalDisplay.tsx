@@ -17,8 +17,6 @@ interface Props {
     regime: string
     reasoning: string
     prompt?: string
-    tiebreaker_used?: boolean
-    round1_details?: ModelDetail[]
     model_details?: ModelDetail[]
   } | null
   remainingSeconds?: number
@@ -62,7 +60,7 @@ export default function SignalDisplay({ signal, remainingSeconds, running }: Pro
     wait: "bg-yellow-900/30",
   }
 
-  const hasDetails = signal.prompt || (signal.model_details && signal.model_details.length > 0) || signal.tiebreaker_used
+  const hasDetails = signal.prompt || (signal.model_details && signal.model_details.length > 0)
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60)
@@ -132,55 +130,7 @@ export default function SignalDisplay({ signal, remainingSeconds, running }: Pro
             </div>
           )}
 
-          {signal.tiebreaker_used && signal.round1_details && signal.round1_details.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="rounded bg-purple-900/40 px-2 py-0.5 text-[10px] font-medium text-purple-300 uppercase tracking-wider">
-                  Split
-                </span>
-                <span className="text-xs text-zinc-500">Models disagreed — Gemini tiebreaker</span>
-              </div>
-
-              <div>
-                <p className="mb-1.5 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Round 1 — Model Votes</p>
-                <div className="space-y-2">
-                  {signal.round1_details.map((m, i) => renderModelCard(m, i))}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 py-1">
-                <div className="h-px flex-1 bg-zinc-700" />
-                <span className="rounded bg-blue-900/40 px-2 py-0.5 text-[10px] font-medium text-blue-300 uppercase tracking-wider">
-                  Gemini Tiebreaker
-                </span>
-                <div className="h-px flex-1 bg-zinc-700" />
-              </div>
-
-              <div className="space-y-2">
-                {signal.model_details?.map((m, i) => (
-                  <div key={i} className={`rounded-lg border border-zinc-700/50 p-3 text-xs ${bgMap[m.direction] || "bg-zinc-900"}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-zinc-200">{m.name}</span>
-                      <span className={colorMap[m.direction] || "text-zinc-400"}>
-                        {m.direction.toUpperCase()}
-                      </span>
-                      <span className="text-zinc-500">
-                        {(m.confidence * 100).toFixed(0)}%
-                      </span>
-                      <span className="ml-auto rounded bg-blue-900/60 px-1.5 py-0.5 text-[10px] text-blue-300">
-                        Final
-                      </span>
-                    </div>
-                    {m.reasoning && (
-                      <p className="text-zinc-400">{m.reasoning}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {(!signal.tiebreaker_used && signal.model_details && signal.model_details.length > 0) && (
+          {signal.model_details && signal.model_details.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-medium text-zinc-400">Model Responses</p>
               <div className="space-y-2">

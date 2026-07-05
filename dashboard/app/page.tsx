@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import StatusCard from "../components/StatusCard"
 import PnLSummary from "../components/PnLSummary"
 import SettingsPanel from "../components/SettingsPanel"
-import AiModelsCard from "../components/AiModelsCard"
+import ProviderOverview from "../components/ProviderOverview"
 import TradingChart from "../components/TradingChart"
 import ProfitCalculator from "../components/ProfitCalculator"
 import VoterHealth from "../components/VoterHealth"
@@ -57,7 +57,6 @@ interface BotStatus {
     min_confidence: string
     max_daily_loss: string
     max_daily_loss_enabled: string
-    groq_api_key: string
     ai_loop_interval: string
     active_asset?: string
   }
@@ -71,7 +70,6 @@ const defaultConfig = {
   min_confidence: "0.65",
   max_daily_loss: "2.0",
   max_daily_loss_enabled: "1",
-  groq_api_key: "",
   ai_loop_interval: "600",
 }
 
@@ -326,7 +324,7 @@ export default function Dashboard() {
         onSaved={fetchStatus}
       />
 
-      <AiModelsCard />
+      <ProviderOverview signals={multiData.signals} />
       <VoterHealth />
     </div>
   )

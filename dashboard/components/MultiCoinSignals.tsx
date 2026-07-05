@@ -7,6 +7,7 @@ interface CoinSignal {
   confidence?: number
   reasoning?: string
   disabled?: boolean
+  secondary_provider?: string | null
 }
 
 interface MultiCoinSignalsProps {
@@ -99,6 +100,9 @@ export default function MultiCoinSignals({ signals, winner, selectedCoin, onSele
                 {coin}
                 {isWinner && <span className="ml-1 text-[10px]">⭐</span>}
               </span>
+              {sig.secondary_provider && !isDisabled && (
+                <span className="text-[10px] text-zinc-600 font-mono">+{sig.secondary_provider}</span>
+              )}
               <DirectionBadge direction={sig.direction} disabled={isDisabled} />
               <ConfidenceBar confidence={sig.confidence} />
               <p className="flex-1 text-[11px] text-zinc-500 truncate hidden sm:block">

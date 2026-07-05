@@ -107,7 +107,7 @@ def bot_status():
 @app.route("/api/v1/bot/debug")
 def bot_debug():
     try:
-        from bot.signals.providers import MODEL_KEYS, GROQ_API_KEY as GROQ_KEY_MODULE
+        from bot.signals.providers import MODEL_KEYS
         enabled = redis.get_enabled_models()
         defs = redis.get_model_defs()
         sig = redis.get_current_signal()
@@ -123,9 +123,6 @@ def bot_debug():
             "gemini_keys_count": len([k for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k]),
             "gemini_keys_str": os.environ.get("GEMINI_API_KEYS", "")[:80] or "per-coin",
             "ai_models": os.environ.get("AI_MODELS", "not set"),
-            "groq_key_set": bool(os.environ.get("GROQ_API_KEY", "")),
-            "groq_key_module_set": bool(GROQ_KEY_MODULE),
-            "groq_fallback_model": os.environ.get("GROQ_FALLBACK_MODEL", "not set"),
             "sniper": {
                 "high_conf_bypass": _HIGH_CONF_OBI_BYPASS,
                 "min_confidence": cfg_now.get("min_confidence"),
@@ -649,7 +646,7 @@ def open_trade(signal: dict, coin: str = "DOGE") -> bool:
         entry_price = hl.get_current_price(coin)
 
         # --- DEBUG: capture config just before trade ---
-        logger.info(f"DEBUG_CFG: {json.dumps({k: v for k, v in cfg.items() if k != 'groq_api_key'})}")
+        logger.info(f"DEBUG_CFG: {json.dumps({k: v for k, v in cfg.items()})}")
         # ---
 
         size_usd = cfg["trade_amount"]
@@ -1123,7 +1120,6 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
         market_context = get_market_context(hl, coin)
 
     enabled_models: list[str] | None = []
-    groq_key = None
     gemini_keys = get_coin_gemini_keys(coin)
 
     closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
@@ -1146,7 +1142,6 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
         sl_usd=cfg["sl_usd"],
         leverage=cfg["leverage"],
         trade_amount=cfg["trade_amount"],
-        groq_api_key=groq_key,
         last_signal_direction=last_dir,
         last_signal_reasoning=last_reason,
         consecutive_waits=0,
@@ -1234,7 +1229,8 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
     try:
         redis.client.set("multi_asset_signals", json.dumps({
             k: {"direction": v.get("direction"), "confidence": v.get("confidence"),
-                "reasoning": v.get("reasoning", "")[:500]}
+                "reasoning": v.get("reasoning", "")[:500],
+                "secondary_provider": v.get("secondary_provider")}
             for k, v in signals.items()
         }))
         redis.client.set("multi_asset_prompts", json.dumps({
@@ -1386,17 +1382,6 @@ def voter_health():
         logger.warning(f"voter-health error: {e}")
         return jsonify({"error": str(e), "db_enabled": db.enabled}), 500
 
-
-@app.route("/api/v1/bot/test-groq")
-def test_groq():
-    from bot.signals.providers import call_groq, GROQ_API_KEY, GROQ_FALLBACK_MODEL
-    result = call_groq("test", GROQ_FALLBACK_MODEL, "Respond with JSON only: {\"direction\": \"wait\", \"confidence\": 0.5, \"reasoning\": \"test\"}", 15, GROQ_API_KEY)
-    return jsonify({
-        "groq_key_set": bool(GROQ_API_KEY),
-        "groq_fallback_model": GROQ_FALLBACK_MODEL,
-        "call_groq_result": result,
-        "call_groq_type": type(result).__name__,
-    })
 
 @app.route("/api/v1/bot/test-db")
 def test_db():
