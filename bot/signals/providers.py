@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 from bot.signals.throttle import ProviderThrottle
 
 SECONDARY_PROVIDERS: dict[str, dict] = {
-    "WIF":    {"base_url": "https://api.sambanova.ai/v1/chat/completions", "env_var": "WIF_SAMBANOVA_KEY",    "model": "Qwen/Qwen3-32B",   "provider": "SambaNova", "throttle": "sambanova"},
-    "POPCAT": {"base_url": "https://api.sambanova.ai/v1/chat/completions", "env_var": "POPCAT_SAMBANOVA_KEY", "model": "Qwen/Qwen3-32B",   "provider": "SambaNova", "throttle": "sambanova"},
-    "DOGE":   {"base_url": "https://api.cerebras.ai/v1/chat/completions",  "env_var": "DOGE_CEREBRAS_KEY",    "model": "qwen3-8b",         "provider": "Cerebras",  "throttle": "cerebras"},
-    "SUI":    {"base_url": "https://api.cerebras.ai/v1/chat/completions",  "env_var": "SUI_CEREBRAS_KEY",     "model": "qwen3-8b",         "provider": "Cerebras",  "throttle": "cerebras"},
+    "WIF":    {"base_url": "https://api.sambanova.ai/v1/chat/completions", "env_var": "WIF_SAMBANOVA_KEY",    "model": "Meta-Llama-3.3-70B-Instruct", "provider": "SambaNova", "throttle": "sambanova"},
+    "POPCAT": {"base_url": "https://api.sambanova.ai/v1/chat/completions", "env_var": "POPCAT_SAMBANOVA_KEY", "model": "Meta-Llama-3.3-70B-Instruct", "provider": "SambaNova", "throttle": "sambanova"},
+    "DOGE":   {"base_url": "https://api.cerebras.ai/v1/chat/completions",  "env_var": "DOGE_CEREBRAS_KEY",    "model": "gemma-4-31b",                  "provider": "Cerebras",  "throttle": "cerebras"},
+    "SUI":    {"base_url": "https://api.cerebras.ai/v1/chat/completions",  "env_var": "SUI_CEREBRAS_KEY",     "model": "gemma-4-31b",                  "provider": "Cerebras",  "throttle": "cerebras"},
     "SOL":    {"base_url": "https://api.groq.com/openai/v1/chat/completions", "env_var": "SOL_GROQ_KEY",     "model": "qwen/qwen3.6-27b", "provider": "Groq",      "throttle": "groq"},
     "JUP":    {"base_url": "https://api.groq.com/openai/v1/chat/completions", "env_var": "JUP_GROQ_KEY",     "model": "qwen/qwen3.6-27b", "provider": "Groq",      "throttle": "groq"},
     "PYTH":   {"base_url": "https://api.groq.com/openai/v1/chat/completions", "env_var": "PYTH_GROQ_KEY",    "model": "qwen/qwen3.6-27b", "provider": "Groq",      "throttle": "groq"},
