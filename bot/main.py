@@ -1386,31 +1386,13 @@ def voter_health():
 @app.route("/api/v1/bot/test-secondary")
 def test_secondary():
     """Test the secondary provider for a given coin."""
-    from bot.signals.providers import call_openai_compat, SECONDARY_PROVIDERS, build_prompt
-    from bot.data import get_ohlcv
-    from bot.signals.indicators import compute_indicators
-    from bot.signals.providers import _detect_regime
-    from bot.config import SYMBOLS
+    from bot.signals.providers import call_openai_compat, SECONDARY_PROVIDERS
     coin = request.args.get("coin", "WIF")
     provider_info = SECONDARY_PROVIDERS.get(coin)
     if not provider_info:
         return jsonify({"error": f"no provider for {coin}"})
     api_key = os.environ.get(provider_info["env_var"], "")
-    
     prompt = "Respond ONLY with valid JSON: {\"direction\": \"wait\", \"confidence\": 0.5, \"reasoning\": \"test\"}"
-    extra = {}
-    if request.args.get("real_prompt"):
-        try:
-            symbol = SYMBOLS.get(coin, f"{coin}/USDT")
-            ohlcv = get_ohlcv(symbol, limit=100)
-            if ohlcv is not None and len(ohlcv) >= 50:
-                regime = _detect_regime(ohlcv)
-                indicators = compute_indicators(ohlcv)
-                prompt = build_prompt(indicators, regime, coin)
-                extra["prompt_len"] = len(prompt)
-        except Exception as e:
-            return jsonify({"error": f"prompt build failed: {e}"})
-    
     result = call_openai_compat(
         provider_info["base_url"],
         api_key,
@@ -1427,7 +1409,6 @@ def test_secondary():
         "env_var_set": bool(api_key),
         "env_var_len": len(api_key),
         "result": result,
-        **extra,
     })
 
 @app.route("/api/v1/bot/test-db")
