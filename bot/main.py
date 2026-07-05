@@ -235,6 +235,11 @@ def set_tp_sl():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _clear_position_config(coin: str):
+    redis.set_config(f"position_tp_usd:{coin}", "")
+    redis.set_config(f"position_sl_usd:{coin}", "")
+    logger.info(f"Cleared per-position TP/SL config for {coin}")
+
 @app.route("/api/v1/bot/close-position", methods=["POST"])
 def close_position():
     logger.info("Close position requested via API")
@@ -255,6 +260,7 @@ def close_position():
             logger.info(f"Position closed via API ({coin})")
         else:
             logger.info(f"No meaningful position to close for {coin} (sz={float(pos['szi']) if pos else 0})")
+        _clear_position_config(coin)
         redis.clear_position()
         close_position_in_db()
         _apply_pending_asset()
@@ -871,6 +877,7 @@ def trading_loop():
                         logger.info(f"Position closed via smart SL ({coin})")
                     except Exception as e:
                         logger.exception(f"Smart SL close error: {e}")
+                    _clear_position_config(coin)
                     close_position_in_db(coin)
                     _apply_pending_asset()
                     time.sleep(0.3)
@@ -926,6 +933,7 @@ def trading_loop():
                 cached = redis.get_position()
                 if cached and abs(cached.get("size", 0)) > 0:
                     logger.info("Position gone from exchange — closing trade in DB")
+                    _clear_position_config(coin)
                     close_position_in_db(coin)
                     _apply_pending_asset()
                     redis.clear_current_signal()
