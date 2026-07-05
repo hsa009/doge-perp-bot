@@ -260,16 +260,17 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
             resp = client.post(base_url, json=payload, headers=headers)
             if resp.status_code == 429:
                 logger.warning(f"{key_label}: 429 rate limited")
-                return None
+                return {"_error": "rate_limited_429"}
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
-                return None
+                return {"_error": f"HTTP_{resp.status_code}"}
             body = resp.json()
             content = body["choices"][0]["message"]["content"]
-            return _parse_response(key_label, model, key_label, content)
+            extracted = _extract_json(content)
+            return _parse_response(key_label, model, key_label, extracted)
     except Exception as e:
-        logger.debug(f"{key_label}: {e}")
-        return None
+        logger.warning(f"{key_label}: {e}")
+        return {"_error": f"EXC_{e}"}
 
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
