@@ -1346,6 +1346,12 @@ def get_multi_asset_data():
                 signals[coin]["rsi"] = json.loads(raw)
         except Exception:
             pass
+        try:
+            raw = redis.get_config(f"ai_result:{coin}", "")
+            if raw:
+                signals[coin]["ai"] = json.loads(raw)
+        except Exception:
+            pass
     # Strip any coins no longer in COIN_LIST
     signals = {k: v for k, v in signals.items() if k in COIN_LIST}
     prompts = {k: v for k, v in prompts.items() if k in COIN_LIST}
