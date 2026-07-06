@@ -50,9 +50,9 @@ export default function StatusCard({ running, onToggle, loading, remainingSecond
           </div>
           {running && remainingSeconds !== undefined && (
             <div className="border-l border-zinc-700 pl-6">
-              <p className="text-xs text-zinc-500">Next Signal</p>
+              <p className="text-xs text-zinc-500">Next AI</p>
               <p className="mt-0.5 font-mono text-lg font-semibold text-zinc-200">
-                {formatTime(display)}
+                {display > 0 ? formatTime(display) : "awaiting cycle..."}
               </p>
             </div>
           )}
