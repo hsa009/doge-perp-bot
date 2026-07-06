@@ -1338,6 +1338,14 @@ def get_multi_asset_data():
             signals[coin]["disabled"] = disabled
         if coin not in prompts:
             prompts[coin] = ""
+    # Merge RSI gatekeeper data per coin
+    for coin in list(signals.keys()):
+        try:
+            raw = redis.get_config(f"rsi_status:{coin}", "")
+            if raw:
+                signals[coin]["rsi"] = json.loads(raw)
+        except Exception:
+            pass
     # Strip any coins no longer in COIN_LIST
     signals = {k: v for k, v in signals.items() if k in COIN_LIST}
     prompts = {k: v for k, v in prompts.items() if k in COIN_LIST}
