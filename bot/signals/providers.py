@@ -607,7 +607,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
 
     forced = False
     winner = "wait"
-    confidence = 0.3
+    confidence = 0.0
+    reasons = ""
 
     if gemini_valid and sec_valid:
         gemini_dir = gemini_result["direction"]
@@ -618,24 +619,24 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             reasons = f"Consensus: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) + {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f})"
         else:
             reasons = f"Disagreement: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) vs {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f}) — defaulting to wait"
+            if consecutive_waits >= 3:
+                forced = True
+                if regime.startswith("TRENDING_UP"):
+                    winner = "long"
+                elif regime.startswith("TRENDING_DOWN"):
+                    winner = "short"
+                else:
+                    winner = "long"
+                confidence = 0.25
+                _debug_calls["forced"] = "true"
     elif gemini_valid:
-        winner = gemini_result["direction"]
-        confidence = float(gemini_result.get("confidence", 0.5))
-        reasons = f"Gemini only: {gemini_result['direction'].upper()}({gemini_result['confidence']:.2f})"
+        logger.debug(f"[CONSENSUS] Dropping signal: Secondary model missing/failed for {coin}")
+        reasons = "Secondary model missing/failed — wait"
+    elif sec_valid:
+        logger.debug(f"[CONSENSUS] Dropping signal: Gemini model missing/failed for {coin}")
+        reasons = "Gemini model missing/failed — wait"
     else:
         reasons = "No valid model responses"
-
-    # Force override for consecutive waits >= 3
-    if consecutive_waits >= 3 and winner == "wait":
-        forced = True
-        if regime.startswith("TRENDING_UP"):
-            winner = "long"
-        elif regime.startswith("TRENDING_DOWN"):
-            winner = "short"
-        else:
-            winner = "long"
-        confidence = 0.25
-        _debug_calls["forced"] = "true"
 
     vote_tally = {"long": 0, "short": 0, "wait": 0}
     for d in details:
