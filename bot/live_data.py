@@ -182,6 +182,11 @@ class HyperliquidStream:
                         if coin not in COINS:
                             continue
 
+                        try:
+                            _get_redis().set_config("ai_loop_heartbeat", str(time.time()))
+                        except Exception:
+                            pass
+
                         if coin not in self._last_ts:
                             self._last_ts[coin] = ts
                             self._last_price[coin] = price
@@ -191,11 +196,6 @@ class HyperliquidStream:
                                 if len(self._history[coin]) > HISTORY_DEPTH:
                                     self._history[coin].pop(0)
                             self._last_ts[coin] = ts
-
-                            try:
-                                _get_redis().set_config("ai_loop_heartbeat", str(time.time()))
-                            except Exception:
-                                pass
 
                             # --- RSI Gatekeeper ---
                             try:
