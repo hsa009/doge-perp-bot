@@ -1601,9 +1601,24 @@ def init_bot():
     t2 = threading.Thread(target=ai_loop, daemon=True)
     t2.start()
 
+    t3 = threading.Thread(target=_run_live_pipeline, daemon=True)
+    t3.start()
+
 
 t_init = threading.Thread(target=init_bot, daemon=True)
 t_init.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860)
+
+def _run_live_pipeline():
+    import asyncio
+    from bot.live_data import boot_bootstrap, HyperliquidStream, market_history
+    async def _entry():
+        hist = await boot_bootstrap()
+        market_history.update(hist)
+        total = sum(len(v) for v in hist.values())
+        logger.info(f"Live pipeline: bootstrapped {total} closes across {len(hist)} coins")
+        stream = HyperliquidStream(market_history)
+        await stream.run()
+    asyncio.run(_entry())
