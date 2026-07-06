@@ -71,7 +71,8 @@ def bot_status():
         signal = redis.get_current_signal()
         position = redis.get_position()
         cfg = get_runtime_config()
-        remaining = int(900 - (time.time() % 900))
+        cfg["ai_loop_interval"] = str(AI_LOOP_INTERVAL)
+        remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
         active_asset = cfg.get("active_asset", "DOGE")
         pending_asset = redis.get_config("pending_asset", "")
         if pending_asset:
@@ -1647,8 +1648,8 @@ def _run_live_pipeline():
     async def _entry():
         hist = await boot_bootstrap()
         market_history.update(hist)
-        total = sum(len(v["close"]) for v in hist.values())
-        logger.info(f"Live pipeline: bootstrapped {total} candles across {len(hist)} coins")
+        total = sum(len(v) for v in hist.values())
+        logger.info(f"Live pipeline: bootstrapped {total} closes across {len(hist)} coins")
         stream = HyperliquidStream(market_history)
         await stream.run()
     asyncio.run(_entry())
