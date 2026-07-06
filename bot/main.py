@@ -1355,6 +1355,16 @@ def debug_ohlcv():
     return jsonify({"ok": False, "rows": 0})
 
 
+@app.route("/api/v1/bot/live-data")
+def debug_live_data():
+    from bot.live_data import get_market_history
+    hist = get_market_history()
+    return jsonify({
+        "coins": list(hist.keys()),
+        "sizes": {coin: len(closes) for coin, closes in hist.items()},
+        "latest_closes": {coin: round(closes[-1], 5) if closes else None for coin, closes in hist.items()},
+    })
+
 @app.route("/api/v1/bot/debug-signal")
 def debug_signal():
     coin = request.args.get("coin", "")
