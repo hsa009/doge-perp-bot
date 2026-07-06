@@ -210,6 +210,18 @@ class HyperliquidStream:
                                 active_tp_pct = 0.01
 
                             analysis = evaluate_coin_momentum(self._history[coin], active_tp_pct)
+                            try:
+                                _get_redis().set_config_with_ttl(
+                                    f"rsi_status:{coin}",
+                                    json.dumps({
+                                        "value": analysis["rsi_value"],
+                                        "suggestion": analysis["suggestion"],
+                                        "logic": analysis["logic"],
+                                    }),
+                                    ttl=120,
+                                )
+                            except Exception:
+                                pass
                             if analysis["suggestion"] == "wait":
                                 logger.debug(f"[RSI-GATE] {coin} flat at {analysis['rsi_value']}. Suppressing AI.")
                             else:

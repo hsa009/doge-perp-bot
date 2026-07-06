@@ -8,6 +8,7 @@ interface CoinSignal {
   reasoning?: string
   disabled?: boolean
   secondary_provider?: string | null
+  rsi?: { value?: number; suggestion?: string; logic?: string }
 }
 
 interface MultiCoinSignalsProps {
@@ -104,6 +105,15 @@ export default function MultiCoinSignals({ signals, winner, selectedCoin, onSele
                 <span className="text-[10px] text-zinc-600 font-mono">+{sig.secondary_provider}</span>
               )}
               <DirectionBadge direction={sig.direction} disabled={isDisabled} />
+              {sig.rsi && (
+                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono ${
+                  sig.rsi.suggestion === "long" ? "bg-green-900/30 text-green-500" :
+                  sig.rsi.suggestion === "short" ? "bg-red-900/30 text-red-500" :
+                  "bg-zinc-800/50 text-zinc-500"
+                }`}>
+                  RSI {sig.rsi.value}
+                </span>
+              )}
               <ConfidenceBar confidence={sig.confidence} />
               <p className="flex-1 text-[11px] text-zinc-500 truncate hidden sm:block">
                 {isDisabled ? "Disabled — skipped by AI" : (sig.reasoning || "")}
