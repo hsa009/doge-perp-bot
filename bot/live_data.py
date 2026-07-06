@@ -132,6 +132,27 @@ class HyperliquidStream:
                 ),
             )
 
+            gemini_dir = signal.get("direction", "?") if signal else "NONE"
+            gemini_conf = signal.get("confidence", 0.0) if signal else 0.0
+            logger.info(
+                f"[AI-RESULT] {coin}: RSI={sentiment} → Gemini={gemini_dir} "
+                f"(conf={gemini_conf:.2f})"
+            )
+            try:
+                _get_redis().set_config_with_ttl(
+                    f"ai_result:{coin}",
+                    json.dumps({
+                        "rsi_suggestion": sentiment,
+                        "rsi_value": rsi_value,
+                        "gemini_direction": gemini_dir,
+                        "gemini_confidence": round(gemini_conf, 2),
+                        "agreed": signal and signal.get("direction") == sentiment,
+                    }),
+                    ttl=300,
+                )
+            except Exception:
+                pass
+
             if signal and signal.get("direction") == sentiment:
                 logger.info(
                     f"[TRADE-CONFIRMED] {coin} {sentiment} "
