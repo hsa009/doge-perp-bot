@@ -101,9 +101,11 @@ class HyperliquidStream:
 
             gemini_dir = signal.get("direction", "?") if signal else "NONE"
             gemini_conf = signal.get("confidence", 0.0) if signal else 0.0
+            debug_calls = signal.get("_debug_calls", {}) if signal else {}
+            gemini_reasoning = signal.get("reasoning", "") if signal else ""
             logger.info(
                 f"[AI-RESULT] {coin}: RSI={sentiment} → Gemini={gemini_dir} "
-                f"(conf={gemini_conf:.2f})"
+                f"(conf={gemini_conf:.2f}) debug={debug_calls}"
             )
             try:
                 _get_redis().set_config_with_ttl(
@@ -114,6 +116,8 @@ class HyperliquidStream:
                         "gemini_direction": gemini_dir,
                         "gemini_confidence": round(gemini_conf, 2),
                         "agreed": signal and signal.get("direction") == sentiment,
+                        "debug": debug_calls,
+                        "reasoning": gemini_reasoning[:200],
                     }),
                     ttl=300,
                 )
