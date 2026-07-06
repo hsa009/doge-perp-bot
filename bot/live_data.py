@@ -7,7 +7,6 @@ import threading
 import httpx
 import websockets
 
-from bot.indicators import evaluate_coin_momentum
 from bot.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
@@ -75,76 +74,7 @@ class HyperliquidStream:
         self._history = history
         self._last_ts: dict[str, int] = {}
         self._last_price: dict[str, float] = {}
-        self._last_ai_request: dict[str, float] = {}
-        self.current_15m_signals: dict[str, dict] = {}
         self.processed_coins: set[str] = set()
-
-    async def _dispatch_ai_confirmation(self, coin: str, sentiment: str,
-                                        rsi_value: float, logic: str,
-                                        price: float, ts: int):
-        now = time.time()
-        last = self._last_ai_request.get(coin, 0.0)
-        if now - last < 60:
-            logger.debug(f"[AI-COOLDOWN] {coin} — skipping, only {now-last:.0f}s since last request")
-            return
-        self._last_ai_request[coin] = now
-
-        logger.info(f"[AI-WAKEUP] {coin} {sentiment} breakout (RSI={rsi_value}). Dispatching to Gemini...")
-
-        try:
-            from bot.main import _run_single_coin_signal
-            loop = asyncio.get_event_loop()
-            signal = await loop.run_in_executor(
-                None,
-                _run_single_coin_signal,
-                coin,
-                None,
-            )
-
-            gemini_dir = signal.get("direction", "?") if signal else "NONE"
-            gemini_conf = signal.get("confidence", 0.0) if signal else 0.0
-            debug_calls = signal.get("_debug_calls", {}) if signal else {}
-            gemini_reasoning = signal.get("reasoning", "") if signal else ""
-            logger.info(
-                f"[AI-RESULT] {coin}: RSI={sentiment} -> Gemini={gemini_dir} "
-                f"(conf={gemini_conf:.2f}) debug={debug_calls}"
-            )
-            try:
-                _get_redis().set_config_with_ttl(
-                    f"ai_result:{coin}",
-                    json.dumps({
-                        "rsi_suggestion": sentiment,
-                        "rsi_value": rsi_value,
-                        "gemini_direction": gemini_dir,
-                        "gemini_confidence": round(gemini_conf, 2),
-                        "agreed": signal and signal.get("direction") == sentiment,
-                        "debug": debug_calls,
-                        "reasoning": gemini_reasoning[:200],
-                    }),
-                    ttl=300,
-                )
-            except Exception:
-                pass
-
-            if signal and signal.get("direction") == sentiment:
-                logger.info(
-                    f"[TRADE-CONFIRMED] {coin} {sentiment} "
-                    f"(conf={signal.get('confidence', 0):.2f}). Executing..."
-                )
-                from bot.main import safe_to_trade, open_trade
-                if safe_to_trade(coin, sentiment):
-                    signal["_coin"] = coin
-                    open_trade(signal, coin=coin)
-                else:
-                    logger.warning(f"[TRADE-BLOCKED] {coin} — safe_to_trade returned False")
-            else:
-                logger.info(
-                    f"[TRADE-REJECTED] {coin} Gemini ({signal.get('direction', '?')}) "
-                    f"disagreed with RSI ({sentiment})."
-                )
-
-        except Exception as e:
-            logger.error(f"[AI-ERROR] {coin}: {e}")
 
     async def run(self):
         while True:
@@ -197,87 +127,77 @@ class HyperliquidStream:
                                     self._history[coin].pop(0)
                             self._last_ts[coin] = ts
 
-                            # --- RSI Gatekeeper ---
-                            try:
-                                r = _get_redis()
-                                pos_tp = r.get_config(f"position_tp_usd:{coin}", "")
-                                tp_usd = float(pos_tp) if pos_tp else float(r.get_config("tp_usd", "1.0"))
-                                cur = self._last_price.get(coin, 0.0)
-                                active_tp_pct = (tp_usd / cur) if cur > 0 else 0.01
-                                active_tp_pct = max(0.001, min(active_tp_pct, 0.1))
-                            except Exception:
-                                active_tp_pct = 0.01
-
-                            analysis = evaluate_coin_momentum(self._history[coin], active_tp_pct)
-                            try:
-                                _get_redis().set_config_with_ttl(
-                                    f"rsi_status:{coin}",
-                                    json.dumps({
-                                        "value": analysis["rsi_value"],
-                                        "suggestion": analysis["suggestion"],
-                                        "logic": analysis["logic"],
-                                        "confidence_score": analysis["confidence_score"],
-                                    }),
-                                    ttl=300,
-                                )
-                            except Exception:
-                                pass
-
-                            if analysis["suggestion"] == "wait":
-                                logger.debug(f"[FILTER-SKIP] {coin} is flat. Skipping.")
-                            else:
-                                logger.info(
-                                    f"[RSI-BREAKOUT] {coin} {analysis['suggestion'].upper()} | "
-                                    f"RSI: {analysis['rsi_value']} Score: {analysis['confidence_score']}"
-                                )
-                                self.current_15m_signals[coin] = {
-                                    "suggestion": analysis["suggestion"],
-                                    "confidence_score": analysis["confidence_score"],
-                                }
-                                await self._dispatch_ai_confirmation(
-                                    coin, analysis["suggestion"],
-                                    analysis["rsi_value"], analysis["logic"],
-                                    price, ts,
-                                )
-
                             self.processed_coins.add(coin)
 
                             if len(self.processed_coins) == 7:
-                                if self.current_15m_signals:
-                                    best_coin = max(
-                                        self.current_15m_signals,
-                                        key=lambda k: self.current_15m_signals[k]["confidence_score"],
-                                    )
-                                    best_data = self.current_15m_signals[best_coin]
+                                logger.info(
+                                    "[AI-BATCH] All 7 coins have new candles. "
+                                    "Running Gemini evaluation..."
+                                )
+                                ai_signals = {}
+                                from bot.main import _run_single_coin_signal
+                                loop = asyncio.get_event_loop()
+                                tasks = [
+                                    loop.run_in_executor(None, _run_single_coin_signal, c, None)
+                                    for c in COINS
+                                ]
+                                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                                for coin_idx, result in enumerate(results):
+                                    c = COINS[coin_idx]
+                                    if isinstance(result, Exception):
+                                        logger.error(f"[AI-BATCH] {c} error: {result}")
+                                        continue
+                                    if not result:
+                                        logger.warning(f"[AI-BATCH] {c} returned None")
+                                        continue
+                                    direction = result.get("direction", "wait")
+                                    confidence = result.get("confidence", 0.0)
                                     logger.info(
-                                        f"[EXECUTION-FILTER] Sniper Triggered! Top Signal: {best_coin} "
-                                        f"{best_data['suggestion'].upper()} | Score: {best_data['confidence_score']}"
+                                        f"[AI-BATCH] {c}: {direction.upper()} "
+                                        f"(conf={confidence:.2f})"
+                                    )
+                                    if direction != "wait":
+                                        ai_signals[c] = result
+
+                                if ai_signals:
+                                    best_coin = max(
+                                        ai_signals,
+                                        key=lambda k: ai_signals[k].get("confidence", 0),
+                                    )
+                                    best_data = ai_signals[best_coin]
+                                    logger.info(
+                                        f"[AI-BATCH] Winner: {best_coin} "
+                                        f"{best_data['direction'].upper()} "
+                                        f"conf={best_data['confidence']:.2f}"
                                     )
                                     try:
                                         _get_redis().set_config_with_ttl(
                                             "batch_winner",
                                             json.dumps({
                                                 "coin": best_coin,
-                                                "suggestion": best_data["suggestion"],
-                                                "confidence_score": best_data["confidence_score"],
+                                                "suggestion": best_data["direction"],
+                                                "confidence_score": best_data.get("confidence", 0),
                                                 "timestamp": time.time(),
                                             }),
                                             ttl=600,
                                         )
                                     except Exception:
                                         pass
+                                    from bot.main import safe_to_trade, open_trade
+                                    if safe_to_trade(best_coin, best_data["direction"]):
+                                        best_data["_coin"] = best_coin
+                                        open_trade(best_data, coin=best_coin)
                                 else:
                                     logger.info(
-                                        "[EXECUTION-FILTER] All 7 coins returned 'wait'. No trade this cycle."
+                                        "[AI-BATCH] All coins returned 'wait'. No trade this cycle."
                                     )
-                                self.current_15m_signals.clear()
                                 self.processed_coins.clear()
 
                         self._last_price[coin] = price
 
             except websockets.ConnectionClosed:
                 logger.warning("WS disconnected — reconnecting in 5s")
-                self.current_15m_signals.clear()
                 self.processed_coins.clear()
                 await asyncio.sleep(5)
             except Exception as e:
