@@ -7,13 +7,8 @@ import threading
 import httpx
 import websockets
 
-import pandas as pd
-from functools import partial
-
 from bot.indicators import evaluate_coin_momentum
 from bot.redis_client import RedisClient
-from bot.config import get_coin_gemini_keys
-from bot.signals.providers import generate_signal
 
 logger = logging.getLogger(__name__)
 
@@ -95,41 +90,13 @@ class HyperliquidStream:
         logger.info(f"[AI-WAKEUP] {coin} {sentiment} breakout (RSI={rsi_value}). Dispatching to Gemini...")
 
         try:
-            closes = self._history[coin]
-            df = pd.DataFrame({
-                "close": closes,
-                "high": [c * 1.001 for c in closes],
-                "low": [c * 0.999 for c in closes],
-                "open": closes,
-                "volume": [0.0] * len(closes),
-            })
-
-            r = _get_redis()
-            tp_usd = float(r.get_config("tp_usd", "3.0"))
-            sl_usd = float(r.get_config("sl_usd", "3.0"))
-            leverage = int(r.get_config("leverage", "10"))
-            trade_amount = float(r.get_config("trade_amount", "10.0"))
-            gemini_keys = get_coin_gemini_keys(coin)
-
+            from bot.main import _run_single_coin_signal
             loop = asyncio.get_event_loop()
             signal = await loop.run_in_executor(
                 None,
-                partial(
-                    generate_signal,
-                    df,
-                    coin=coin,
-                    enabled_models=[],
-                    tp_usd=tp_usd,
-                    sl_usd=sl_usd,
-                    leverage=leverage,
-                    trade_amount=trade_amount,
-                    market_context={},
-                    gemini_api_keys=gemini_keys,
-                    db=None,
-                    macro_trend="mixed",
-                    liq_price=0.0,
-                    liq_dist_pct=0.0,
-                ),
+                _run_single_coin_signal,
+                coin,
+                None,
             )
 
             gemini_dir = signal.get("direction", "?") if signal else "NONE"
