@@ -150,6 +150,8 @@ class HyperliquidStream:
                             self._last_high[coin] = high
                             self._last_low[coin] = low
 
+                            _get_redis().set_config("ai_loop_heartbeat", str(time.time()))
+
                             # --- Double RSI Trend Gatekeeper ---
                             try:
                                 r = _get_redis()
