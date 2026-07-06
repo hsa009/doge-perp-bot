@@ -135,8 +135,14 @@ class HyperliquidStream:
             if signal and signal.get("direction") == sentiment:
                 logger.info(
                     f"[TRADE-CONFIRMED] {coin} {sentiment} "
-                    f"(conf={signal.get('confidence', 0):.2f}). Ready for execution."
+                    f"(conf={signal.get('confidence', 0):.2f}). Executing..."
                 )
+                from bot.main import safe_to_trade, open_trade
+                if safe_to_trade(coin, sentiment):
+                    signal["_coin"] = coin
+                    open_trade(signal, coin=coin)
+                else:
+                    logger.warning(f"[TRADE-BLOCKED] {coin} — safe_to_trade returned False")
             else:
                 logger.info(
                     f"[TRADE-REJECTED] {coin} Gemini ({signal.get('direction', '?')}) "
