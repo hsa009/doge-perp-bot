@@ -260,46 +260,42 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
           <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-2">Selected Asset</h3>
-          {multiData.batch_winner || (multiData.winner && multiData.signals?.[multiData.winner]) ? (
-            (() => {
-              const bw = multiData.batch_winner
-              const ws = bw ? (multiData.signals?.[bw.coin] || {}) : (multiData.signals?.[multiData.winner] || {})
-              const dir = bw ? bw.suggestion : (ws.direction || ws.rsi?.suggestion || "")
-              const score = bw ? bw.confidence_score : (ws.confidence ?? 0)
-              const scorePct = Math.min(Math.max(score / 10 * 100, 0), 100)
-              return (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-lg font-bold text-amber-400">
-                      {bw ? bw.coin : multiData.winner} ⭐
-                    </span>
-                    <span
-                      className={
-                        `inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ` +
-                        (dir === "long" ? "bg-green-900/60 text-green-400" : dir === "short" ? "bg-red-900/60 text-red-400" : "bg-zinc-800 text-zinc-500")
-                      }
-                    >
-                      {dir || "WAIT"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${scorePct >= 70 ? "bg-green-500" : scorePct >= 40 ? "bg-yellow-500" : "bg-zinc-600"}`}
-                        style={{ width: `${scorePct}%` }}
-                      />
-                    </div>
-                    <span className="font-mono text-[11px] text-zinc-400 w-10 text-right">{score.toFixed(2)}</span>
-                  </div>
-                  {ws.rsi?.logic && (
-                    <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{ws.rsi.logic}</p>
-                  )}
+          {(() => {
+            const sig = multiData.signals?.[selectedCoin]
+            const dir = sig?.direction || ""
+            const score = sig?.confidence ?? 0
+            const scorePct = Math.min(Math.max(score / 10 * 100, 0), 100)
+            const isWinner = (multiData.batch_winner?.coin === selectedCoin || multiData.winner === selectedCoin)
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-lg font-bold text-amber-400">
+                    {selectedCoin} {isWinner ? "⭐" : ""}
+                  </span>
+                  <span
+                    className={
+                      `inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ` +
+                      (dir === "long" ? "bg-green-900/60 text-green-400" : dir === "short" ? "bg-red-900/60 text-red-400" : "bg-zinc-800 text-zinc-500")
+                    }
+                  >
+                    {dir || "WAIT"}
+                  </span>
                 </div>
-              )
-            })()
-          ) : (
-            <p className="text-sm text-zinc-500">Waiting for 15m candle close...</p>
-          )}
+                <div className="flex items-center gap-1.5">
+                  <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${scorePct >= 70 ? "bg-green-500" : scorePct >= 40 ? "bg-yellow-500" : "bg-zinc-600"}`}
+                      style={{ width: `${scorePct}%` }}
+                    />
+                  </div>
+                  <span className="font-mono text-[11px] text-zinc-400 w-10 text-right">{score.toFixed(2)}</span>
+                </div>
+                {sig?.reasoning && (
+                  <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{sig.reasoning}</p>
+                )}
+              </div>
+            )
+          })()}
         </div>
         <PnLSummary totalPnl={stats.total_pnl} winRate={stats.win_rate} totalTrades={stats.total_trades} />
       </div>
