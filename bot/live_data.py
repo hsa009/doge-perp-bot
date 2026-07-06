@@ -37,7 +37,7 @@ def get_market_history() -> dict[str, list[float]]:
 
 async def boot_bootstrap() -> dict[str, list[float]]:
     end_time_ms = int(time.time() * 1000)
-    start_time_ms = end_time_ms - (HISTORY_DEPTH + 1) * 60 * 1000
+    start_time_ms = end_time_ms - (HISTORY_DEPTH + 1) * 900 * 1000
 
     async def fetch_one(coin: str) -> tuple[str, list[float]]:
         try:
@@ -46,7 +46,7 @@ async def boot_bootstrap() -> dict[str, list[float]]:
                     "type": "candleSnapshot",
                     "req": {
                         "coin": coin,
-                        "interval": "1m",
+                                "interval": "15m",
                         "startTime": start_time_ms,
                         "endTime": end_time_ms,
                     },
@@ -76,73 +76,77 @@ class HyperliquidStream:
         self._last_ts: dict[str, int] = {}
         self._last_price: dict[str, float] = {}
         self._last_ai_request: dict[str, float] = {}
+        self.current_15m_signals: dict[str, dict] = {}
+        self.processed_coins: set[str] = set()
 
     async def _dispatch_ai_confirmation(self, coin: str, sentiment: str,
                                         rsi_value: float, logic: str,
                                         price: float, ts: int):
-        now = time.time()
-        last = self._last_ai_request.get(coin, 0.0)
-        if now - last < 60:
-            logger.debug(f"[AI-COOLDOWN] {coin} — skipping, only {now-last:.0f}s since last request")
-            return
-        self._last_ai_request[coin] = now
-
-        logger.info(f"[AI-WAKEUP] {coin} {sentiment} breakout (RSI={rsi_value}). Dispatching to Gemini...")
-
-        try:
-            from bot.main import _run_single_coin_signal
-            loop = asyncio.get_event_loop()
-            signal = await loop.run_in_executor(
-                None,
-                _run_single_coin_signal,
-                coin,
-                None,
-            )
-
-            gemini_dir = signal.get("direction", "?") if signal else "NONE"
-            gemini_conf = signal.get("confidence", 0.0) if signal else 0.0
-            debug_calls = signal.get("_debug_calls", {}) if signal else {}
-            gemini_reasoning = signal.get("reasoning", "") if signal else ""
-            logger.info(
-                f"[AI-RESULT] {coin}: RSI={sentiment} → Gemini={gemini_dir} "
-                f"(conf={gemini_conf:.2f}) debug={debug_calls}"
-            )
-            try:
-                _get_redis().set_config_with_ttl(
-                    f"ai_result:{coin}",
-                    json.dumps({
-                        "rsi_suggestion": sentiment,
-                        "rsi_value": rsi_value,
-                        "gemini_direction": gemini_dir,
-                        "gemini_confidence": round(gemini_conf, 2),
-                        "agreed": signal and signal.get("direction") == sentiment,
-                        "debug": debug_calls,
-                        "reasoning": gemini_reasoning[:200],
-                    }),
-                    ttl=300,
-                )
-            except Exception:
-                pass
-
-            if signal and signal.get("direction") == sentiment:
-                logger.info(
-                    f"[TRADE-CONFIRMED] {coin} {sentiment} "
-                    f"(conf={signal.get('confidence', 0):.2f}). Executing..."
-                )
-                from bot.main import safe_to_trade, open_trade
-                if safe_to_trade(coin, sentiment):
-                    signal["_coin"] = coin
-                    open_trade(signal, coin=coin)
-                else:
-                    logger.warning(f"[TRADE-BLOCKED] {coin} — safe_to_trade returned False")
-            else:
-                logger.info(
-                    f"[TRADE-REJECTED] {coin} Gemini ({signal.get('direction', '?')}) "
-                    f"disagreed with RSI ({sentiment})."
-                )
-
-        except Exception as e:
-            logger.error(f"[AI-ERROR] {coin}: {e}")
+        # DISABLED: Preserved for potential future AI consensus re-activation.
+        pass
+        # now = time.time()
+        # last = self._last_ai_request.get(coin, 0.0)
+        # if now - last < 60:
+        #     logger.debug(f"[AI-COOLDOWN] {coin} — skipping, only {now-last:.0f}s since last request")
+        #     return
+        # self._last_ai_request[coin] = now
+        #
+        # logger.info(f"[AI-WAKEUP] {coin} {sentiment} breakout (RSI={rsi_value}). Dispatching to Gemini...")
+        #
+        # try:
+        #     from bot.main import _run_single_coin_signal
+        #     loop = asyncio.get_event_loop()
+        #     signal = await loop.run_in_executor(
+        #         None,
+        #         _run_single_coin_signal,
+        #         coin,
+        #         None,
+        #     )
+        #
+        #     gemini_dir = signal.get("direction", "?") if signal else "NONE"
+        #     gemini_conf = signal.get("confidence", 0.0) if signal else 0.0
+        #     debug_calls = signal.get("_debug_calls", {}) if signal else {}
+        #     gemini_reasoning = signal.get("reasoning", "") if signal else ""
+        #     logger.info(
+        #         f"[AI-RESULT] {coin}: RSI={sentiment} → Gemini={gemini_dir} "
+        #         f"(conf={gemini_conf:.2f}) debug={debug_calls}"
+        #     )
+        #     try:
+        #         _get_redis().set_config_with_ttl(
+        #             f"ai_result:{coin}",
+        #             json.dumps({
+        #                 "rsi_suggestion": sentiment,
+        #                 "rsi_value": rsi_value,
+        #                 "gemini_direction": gemini_dir,
+        #                 "gemini_confidence": round(gemini_conf, 2),
+        #                 "agreed": signal and signal.get("direction") == sentiment,
+        #                 "debug": debug_calls,
+        #                 "reasoning": gemini_reasoning[:200],
+        #             }),
+        #             ttl=300,
+        #         )
+        #     except Exception:
+        #         pass
+        #
+        #     if signal and signal.get("direction") == sentiment:
+        #         logger.info(
+        #             f"[TRADE-CONFIRMED] {coin} {sentiment} "
+        #             f"(conf={signal.get('confidence', 0):.2f}). Executing..."
+        #         )
+        #         from bot.main import safe_to_trade, open_trade
+        #         if safe_to_trade(coin, sentiment):
+        #             signal["_coin"] = coin
+        #             open_trade(signal, coin=coin)
+        #         else:
+        #             logger.warning(f"[TRADE-BLOCKED] {coin} — safe_to_trade returned False")
+        #     else:
+        #         logger.info(
+        #             f"[TRADE-REJECTED] {coin} Gemini ({signal.get('direction', '?')}) "
+        #             f"disagreed with RSI ({sentiment})."
+        #         )
+        #
+        # except Exception as e:
+        #     logger.error(f"[AI-ERROR] {coin}: {e}")
 
     async def run(self):
         while True:
@@ -155,7 +159,7 @@ class HyperliquidStream:
                             "subscription": {
                                 "type": "candle",
                                 "coin": coin,
-                                "interval": "1m",
+                        "interval": "15m",
                             },
                         }))
                     logger.info(f"Subscribed to {len(COINS)} candle channels")
@@ -209,30 +213,66 @@ class HyperliquidStream:
                                         "value": analysis["rsi_value"],
                                         "suggestion": analysis["suggestion"],
                                         "logic": analysis["logic"],
+                                        "confidence_score": analysis["confidence_score"],
                                     }),
-                                    ttl=120,
+                                    ttl=300,
                                 )
                             except Exception:
                                 pass
+
+                            # DISABLED: Old RSI→Gemini bridge — preserved for future AI consensus re-activation.
                             if analysis["suggestion"] == "wait":
-                                logger.debug(f"[RSI-GATE] {coin} flat at {analysis['rsi_value']}. Suppressing AI.")
+                                logger.debug(f"[FILTER-SKIP] {coin} is flat. Skipping.")
                             else:
-                                logger.info(f"[RSI-TRIGGER] {coin} breakout! RSI: {analysis['rsi_value']} | Dir: {analysis['suggestion'].upper()}")
-                                asyncio.create_task(
-                                    self._dispatch_ai_confirmation(
-                                        coin=coin,
-                                        sentiment=analysis["suggestion"],
-                                        rsi_value=analysis["rsi_value"],
-                                        logic=analysis["logic"],
-                                        price=price,
-                                        ts=ts,
-                                    )
+                                logger.info(
+                                    f"[RSI-BREAKOUT] {coin} {analysis['suggestion'].upper()} | "
+                                    f"RSI: {analysis['rsi_value']} Score: {analysis['confidence_score']}"
                                 )
+                                self.current_15m_signals[coin] = {
+                                    "suggestion": analysis["suggestion"],
+                                    "confidence_score": analysis["confidence_score"],
+                                }
+
+                            self.processed_coins.add(coin)
+
+                            if len(self.processed_coins) == 7:
+                                if self.current_15m_signals:
+                                    best_coin = max(
+                                        self.current_15m_signals,
+                                        key=lambda k: self.current_15m_signals[k]["confidence_score"],
+                                    )
+                                    best_data = self.current_15m_signals[best_coin]
+                                    logger.info(
+                                        f"[EXECUTION-FILTER] Sniper Triggered! Top Signal: {best_coin} "
+                                        f"{best_data['suggestion'].upper()} | Score: {best_data['confidence_score']}"
+                                    )
+                                    try:
+                                        _get_redis().set_config_with_ttl(
+                                            "batch_winner",
+                                            json.dumps({
+                                                "coin": best_coin,
+                                                "suggestion": best_data["suggestion"],
+                                                "confidence_score": best_data["confidence_score"],
+                                                "timestamp": time.time(),
+                                            }),
+                                            ttl=600,
+                                        )
+                                    except Exception:
+                                        pass
+                                    # TODO: Route best_coin directly to Hyperliquid execution module.
+                                else:
+                                    logger.info(
+                                        "[EXECUTION-FILTER] All 7 coins returned 'wait'. No trade this cycle."
+                                    )
+                                self.current_15m_signals.clear()
+                                self.processed_coins.clear()
 
                         self._last_price[coin] = price
 
             except websockets.ConnectionClosed:
                 logger.warning("WS disconnected — reconnecting in 5s")
+                self.current_15m_signals.clear()
+                self.processed_coins.clear()
                 await asyncio.sleep(5)
             except Exception as e:
                 logger.exception(f"WS error: {e}")

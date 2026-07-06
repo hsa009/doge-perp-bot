@@ -1311,6 +1311,7 @@ def get_multi_asset_data():
     signals = {}
     prompts = {}
     winner = ""
+    batch_winner_raw = None
     enabled_coins = redis.get_enabled_coins()
     try:
         raw = redis.client.get("multi_asset_signals")
@@ -1328,6 +1329,12 @@ def get_multi_asset_data():
         raw = redis.client.get("multi_asset_winner")
         if raw:
             winner = raw
+    except Exception:
+        pass
+    try:
+        raw = redis.get_config("batch_winner", "")
+        if raw:
+            batch_winner_raw = json.loads(raw)
     except Exception:
         pass
     for coin in COIN_LIST:
@@ -1355,7 +1362,7 @@ def get_multi_asset_data():
     # Strip any coins no longer in COIN_LIST
     signals = {k: v for k, v in signals.items() if k in COIN_LIST}
     prompts = {k: v for k, v in prompts.items() if k in COIN_LIST}
-    return jsonify({"signals": signals, "prompts": prompts, "winner": winner})
+    return jsonify({"signals": signals, "prompts": prompts, "winner": winner, "batch_winner": batch_winner_raw})
 
 
 @app.route("/api/v1/bot/debug-ohlcv")

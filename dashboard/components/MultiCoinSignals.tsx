@@ -8,7 +8,7 @@ interface CoinSignal {
   reasoning?: string
   disabled?: boolean
   secondary_provider?: string | null
-  rsi?: { value?: number; suggestion?: string; logic?: string }
+  rsi?: { value?: number; suggestion?: string; logic?: string; confidence_score?: number }
 }
 
 interface MultiCoinSignalsProps {
@@ -42,20 +42,6 @@ function DirectionBadge({ direction, disabled }: { direction?: string; disabled?
   )
 }
 
-function ConfidenceBar({ confidence }: { confidence?: number }) {
-  const pct = Math.min(Math.max((confidence ?? 0) * 100, 0), 100)
-  return (
-    <div className="flex items-center gap-1.5 min-w-[80px]">
-      <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${pct >= 70 ? "bg-green-500" : pct >= 40 ? "bg-yellow-500" : "bg-zinc-600"}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="font-mono text-[11px] text-zinc-400 w-8 text-right">{pct}%</span>
-    </div>
-  )
-}
 
 function ToggleSwitch({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (
@@ -73,7 +59,7 @@ export default function MultiCoinSignals({ signals, winner, selectedCoin, onSele
   if (!signals) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-        <p className="text-sm text-zinc-500">No signal data yet — waiting for AI cycle</p>
+        <p className="text-sm text-zinc-500">No signal data yet — waiting for 15m candle close</p>
       </div>
     )
   }
@@ -84,11 +70,13 @@ export default function MultiCoinSignals({ signals, winner, selectedCoin, onSele
         <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Coin Signals</h2>
       </div>
       <div className="divide-y divide-zinc-800/60">
-        {COINS.map((coin) => {
+          {COINS.map((coin) => {
           const sig = signals[coin] || {}
           const isWinner = coin === winner
           const isSelected = coin === selectedCoin
           const isDisabled = sig.disabled === true
+          const displayDir = sig.rsi?.suggestion || sig.direction
+          const displayScore = sig.rsi?.confidence_score ?? (sig.confidence ?? 0)
           return (
             <button
               key={coin}
@@ -104,7 +92,7 @@ export default function MultiCoinSignals({ signals, winner, selectedCoin, onSele
               {sig.secondary_provider && !isDisabled && (
                 <span className="text-[10px] text-zinc-600 font-mono">+{sig.secondary_provider}</span>
               )}
-              <DirectionBadge direction={sig.direction} disabled={isDisabled} />
+              <DirectionBadge direction={displayDir} disabled={isDisabled} />
               {sig.rsi && (
                 <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono ${
                   sig.rsi.suggestion === "long" ? "bg-green-900/30 text-green-500" :
@@ -114,9 +102,17 @@ export default function MultiCoinSignals({ signals, winner, selectedCoin, onSele
                   RSI {sig.rsi.value}
                 </span>
               )}
-              <ConfidenceBar confidence={sig.confidence} />
+              <div className="flex items-center gap-1.5 min-w-[80px]">
+                <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${displayScore >= 7 ? "bg-green-500" : displayScore >= 4 ? "bg-yellow-500" : "bg-zinc-600"}`}
+                    style={{ width: `${Math.min(Math.max(displayScore / 10 * 100, 0), 100)}%` }}
+                  />
+                </div>
+                <span className="font-mono text-[11px] text-zinc-400 w-10 text-right">{displayScore.toFixed(1)}</span>
+              </div>
               <p className="flex-1 text-[11px] text-zinc-500 truncate hidden sm:block">
-                {isDisabled ? "Disabled — skipped by AI" : (sig.reasoning || "")}
+                {isDisabled ? "Disabled — skipped" : (sig.rsi?.logic || sig.reasoning || "")}
               </p>
               <ToggleSwitch enabled={!isDisabled} onToggle={() => onToggleCoin(coin, isDisabled)} />
             </button>
