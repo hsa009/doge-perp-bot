@@ -7,8 +7,13 @@ import threading
 import httpx
 import websockets
 
+import pandas as pd
+from functools import partial
+
 from bot.indicators import evaluate_coin_momentum
 from bot.redis_client import RedisClient
+from bot.config import get_coin_gemini_keys
+from bot.signals.providers import generate_signal
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +80,71 @@ class HyperliquidStream:
         self._history = history
         self._last_ts: dict[str, int] = {}
         self._last_price: dict[str, float] = {}
+        self._last_ai_request: dict[str, float] = {}
+
+    async def _dispatch_ai_confirmation(self, coin: str, sentiment: str,
+                                        rsi_value: float, logic: str,
+                                        price: float, ts: int):
+        now = time.time()
+        last = self._last_ai_request.get(coin, 0.0)
+        if now - last < 60:
+            logger.debug(f"[AI-COOLDOWN] {coin} — skipping, only {now-last:.0f}s since last request")
+            return
+        self._last_ai_request[coin] = now
+
+        logger.info(f"[AI-WAKEUP] {coin} {sentiment} breakout (RSI={rsi_value}). Dispatching to Gemini...")
+
+        try:
+            closes = self._history[coin]
+            df = pd.DataFrame({
+                "close": closes,
+                "high": [c * 1.001 for c in closes],
+                "low": [c * 0.999 for c in closes],
+                "open": closes,
+                "volume": [0.0] * len(closes),
+            })
+
+            r = _get_redis()
+            tp_usd = float(r.get_config("tp_usd", "3.0"))
+            sl_usd = float(r.get_config("sl_usd", "3.0"))
+            leverage = int(r.get_config("leverage", "10"))
+            trade_amount = float(r.get_config("trade_amount", "10.0"))
+            gemini_keys = get_coin_gemini_keys(coin)
+
+            loop = asyncio.get_event_loop()
+            signal = await loop.run_in_executor(
+                None,
+                partial(
+                    generate_signal,
+                    df,
+                    coin=coin,
+                    enabled_models=[],
+                    tp_usd=tp_usd,
+                    sl_usd=sl_usd,
+                    leverage=leverage,
+                    trade_amount=trade_amount,
+                    market_context={},
+                    gemini_api_keys=gemini_keys,
+                    db=None,
+                    macro_trend="mixed",
+                    liq_price=0.0,
+                    liq_dist_pct=0.0,
+                ),
+            )
+
+            if signal and signal.get("direction") == sentiment:
+                logger.info(
+                    f"[TRADE-CONFIRMED] {coin} {sentiment} "
+                    f"(conf={signal.get('confidence', 0):.2f}). Ready for execution."
+                )
+            else:
+                logger.info(
+                    f"[TRADE-REJECTED] {coin} Gemini ({signal.get('direction', '?')}) "
+                    f"disagreed with RSI ({sentiment})."
+                )
+
+        except Exception as e:
+            logger.error(f"[AI-ERROR] {coin}: {e}")
 
     async def run(self):
         while True:
@@ -138,7 +208,16 @@ class HyperliquidStream:
                                 logger.debug(f"[RSI-GATE] {coin} flat at {analysis['rsi_value']}. Suppressing AI.")
                             else:
                                 logger.info(f"[RSI-TRIGGER] {coin} breakout! RSI: {analysis['rsi_value']} | Dir: {analysis['suggestion'].upper()}")
-                                # TODO: Phase 4 — wake Gemini signal engine
+                                asyncio.create_task(
+                                    self._dispatch_ai_confirmation(
+                                        coin=coin,
+                                        sentiment=analysis["suggestion"],
+                                        rsi_value=analysis["rsi_value"],
+                                        logic=analysis["logic"],
+                                        price=price,
+                                        ts=ts,
+                                    )
+                                )
 
                         self._last_price[coin] = price
 
