@@ -39,8 +39,8 @@ MAX_SIGNAL_AGE_S = 4.0
 
 VOTER_DEADLINE_S = 180
 
-# Gemini rate limiter: 50 calls/minute (sliding window)
-_GEMINI_RATE_LIMIT = 50
+# Gemini rate limiter: 8 calls/minute (sliding window, free tier limit ~10)
+_GEMINI_RATE_LIMIT = 8
 _GEMINI_WINDOW_S = 60
 _gemini_call_times: list[float] = []
 _gemini_rate_lock = threading.Lock()
@@ -318,7 +318,8 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
             resp = client.post(url, json=payload)
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
-                return {"_error": f"HTTP_{resp.status_code}"}
+                snippet = resp.text[:80].replace("{", "(").replace("}", ")").replace('"', "'")
+                return {"_error": f"HTTP_{resp.status_code}_{snippet}"}
             body = resp.json()
             candidates = body.get("candidates", [])
             if not candidates:
@@ -374,7 +375,7 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | Non
             return last
         if last and ("HTTP_429" in str(last.get("_error", "")) or "HTTP_503" in str(last.get("_error", ""))):
             if attempt < max_retries - 1:
-                delay = min(2 ** attempt, 30)
+                delay = 30 if "HTTP_429" in str(last.get("_error", "")) else min(2 ** attempt, 15)
                 logger.info(f"{key_label}: retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
                 continue
