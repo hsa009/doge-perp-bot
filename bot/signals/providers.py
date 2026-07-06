@@ -517,7 +517,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     voter_tasks: list[tuple[str, callable, tuple]] = []
 
     # Gemini voter
-    if gemini_keys:
+    if gemini_keys or _GEMINI_KEY_RING:
         voter_tasks.append(("gemini", call_gemini_http_with_retry, (prompt,)))
 
     # # Secondary voter (with throttle, staleness check) — DISABLED
