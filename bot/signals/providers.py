@@ -39,6 +39,28 @@ MAX_SIGNAL_AGE_S = 4.0
 
 VOTER_DEADLINE_S = 180
 
+# Gemini rate limiter: 50 calls/minute (sliding window)
+_GEMINI_RATE_LIMIT = 50
+_GEMINI_WINDOW_S = 60
+_gemini_call_times: list[float] = []
+_gemini_rate_lock = threading.Lock()
+
+
+def _gemini_rate_acquire() -> float:
+    """Wait until within rate limit. Returns wait time in seconds."""
+    with _gemini_rate_lock:
+        now = time.time()
+        cutoff = now - _GEMINI_WINDOW_S
+        _gemini_call_times[:] = [t for t in _gemini_call_times if t > cutoff]
+        if len(_gemini_call_times) < _GEMINI_RATE_LIMIT:
+            _gemini_call_times.append(now)
+            return 0.0
+        earliest = min(_gemini_call_times)
+        wait = earliest + _GEMINI_WINDOW_S - now + 1.0
+        _gemini_call_times.pop(0)
+        _gemini_call_times.append(now + wait)
+        return wait
+
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
 
 
@@ -333,6 +355,11 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | Non
     if not _GEMINI_KEY_RING:
         logger.error("No Gemini keys available in key ring")
         return None
+
+    wait = _gemini_rate_acquire()
+    if wait > 0:
+        logger.info(f"Gemini rate limit reached — sleeping {wait:.0f}s")
+        time.sleep(wait)
 
     last = None
     for attempt in range(max_retries):
