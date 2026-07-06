@@ -503,15 +503,15 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
 
     _debug_calls: dict[str, str] = {}
 
-    # --- Secondary provider setup ---
-    provider_info = SECONDARY_PROVIDERS.get(coin)
-    secondary_key = ""
-    if provider_info:
-        secondary_key = os.environ.get(provider_info["env_var"], "")
-    if secondary_key:
-        _debug_calls["secondary"] = f"provider={provider_info['provider']}"
-    else:
-        _debug_calls["secondary"] = "no_key"
+    # # --- Secondary provider setup ---
+    # provider_info = SECONDARY_PROVIDERS.get(coin)
+    # secondary_key = ""
+    # if provider_info:
+    #     secondary_key = os.environ.get(provider_info["env_var"], "")
+    # if secondary_key:
+    #     _debug_calls["secondary"] = f"provider={provider_info['provider']}"
+    # else:
+    #     _debug_calls["secondary"] = "no_key"
 
     # --- Build voter tasks ---
     voter_tasks: list[tuple[str, callable, tuple]] = []
@@ -520,30 +520,30 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     if gemini_keys:
         voter_tasks.append(("gemini", call_gemini_http_with_retry, (prompt,)))
 
-    # Secondary voter (with throttle, staleness check)
-    def _call_secondary() -> dict | None:
-        if not secondary_key or not provider_info:
-            return None
-        elapsed = time.time() - signal_start
-        throttle = _provider_throttles.get(provider_info["throttle"])
-        wait = throttle.acquire() if throttle else 0.0
-        if elapsed + wait > MAX_SIGNAL_AGE_S:
-            logger.info(f"secondary:{coin}: stale signal (elapsed={elapsed:.1f}s wait={wait:.1f}s > {MAX_SIGNAL_AGE_S}s) — dropping")
-            return {"_error": "STALE_DROPPED"}
-        if wait > 0:
-            time.sleep(wait)
-        result = call_openai_compat(
-            provider_info["base_url"],
-            secondary_key,
-            provider_info["model"],
-            prompt,
-            key_label=f"{coin}_secondary",
-            timeout=30,
-        )
-        return result
-
-    if secondary_key:
-        voter_tasks.append(("secondary", _call_secondary, ()))
+    # # Secondary voter (with throttle, staleness check) — DISABLED
+    # def _call_secondary() -> dict | None:
+    #     if not secondary_key or not provider_info:
+    #         return None
+    #     elapsed = time.time() - signal_start
+    #     throttle = _provider_throttles.get(provider_info["throttle"])
+    #     wait = throttle.acquire() if throttle else 0.0
+    #     if elapsed + wait > MAX_SIGNAL_AGE_S:
+    #         logger.info(f"secondary:{coin}: stale signal (elapsed={elapsed:.1f}s wait={wait:.1f}s > {MAX_SIGNAL_AGE_S}s) — dropping")
+    #         return {"_error": "STALE_DROPPED"}
+    #     if wait > 0:
+    #         time.sleep(wait)
+    #     result = call_openai_compat(
+    #         provider_info["base_url"],
+    #         secondary_key,
+    #         provider_info["model"],
+    #         prompt,
+    #         key_label=f"{coin}_secondary",
+    #         timeout=30,
+    #     )
+    #     return result
+    #
+    # if secondary_key:
+    #     voter_tasks.append(("secondary", _call_secondary, ()))
 
     # --- Run voters concurrently ---
     results: dict[str, dict | None] = {}
@@ -599,52 +599,66 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             except Exception as e:
                 _debug_calls[f"save_{label}"] = f"DB_ERR: {e}"
 
-    # --- Consensus logic ---
+    # # --- Consensus logic (dual-model) — DISABLED ---
+    # gemini_result = results.get("gemini", {})
+    # sec_result = results.get("secondary", {})
+    # gemini_valid = _is_valid(gemini_result)
+    # sec_valid = _is_valid(sec_result)
+    #
+    # forced = False
+    # winner = "wait"
+    # confidence = 0.0
+    # reasons = ""
+    #
+    # if gemini_valid and sec_valid:
+    #     gemini_dir = gemini_result["direction"]
+    #     sec_dir = sec_result["direction"]
+    #     if gemini_dir == sec_dir:
+    #         winner = gemini_dir
+    #         confidence = (float(gemini_result.get("confidence", 0.5)) + float(sec_result.get("confidence", 0.5))) / 2.0
+    #         reasons = f"Consensus: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) + {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f})"
+    #     else:
+    #         reasons = f"Disagreement: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) vs {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f}) — defaulting to wait"
+    #         if consecutive_waits >= 3:
+    #             forced = True
+    #             if regime.startswith("TRENDING_UP"):
+    #                 winner = "long"
+    #             elif regime.startswith("TRENDING_DOWN"):
+    #                 winner = "short"
+    #             else:
+    #                 winner = "long"
+    #             confidence = 0.25
+    #             _debug_calls["forced"] = "true"
+    # elif gemini_valid:
+    #     logger.debug(f"[CONSENSUS] Dropping signal: Secondary model missing/failed for {coin}")
+    #     reasons = "Secondary model missing/failed — wait"
+    # elif sec_valid:
+    #     logger.debug(f"[CONSENSUS] Dropping signal: Gemini model missing/failed for {coin}")
+    #     reasons = "Gemini model missing/failed — wait"
+    # else:
+    #     reasons = "No valid model responses"
+
+    # --- Gemini-only pass-through (secondary disabled) ---
     gemini_result = results.get("gemini", {})
-    sec_result = results.get("secondary", {})
     gemini_valid = _is_valid(gemini_result)
-    sec_valid = _is_valid(sec_result)
-
     forced = False
-    winner = "wait"
-    confidence = 0.0
-    reasons = ""
-
-    if gemini_valid and sec_valid:
-        gemini_dir = gemini_result["direction"]
-        sec_dir = sec_result["direction"]
-        if gemini_dir == sec_dir:
-            winner = gemini_dir
-            confidence = (float(gemini_result.get("confidence", 0.5)) + float(sec_result.get("confidence", 0.5))) / 2.0
-            reasons = f"Consensus: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) + {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f})"
-        else:
-            reasons = f"Disagreement: Gemini={gemini_dir.upper()}({gemini_result['confidence']:.2f}) vs {sec_result.get('name','secondary')}={sec_dir.upper()}({sec_result['confidence']:.2f}) — defaulting to wait"
-            if consecutive_waits >= 3:
-                forced = True
-                if regime.startswith("TRENDING_UP"):
-                    winner = "long"
-                elif regime.startswith("TRENDING_DOWN"):
-                    winner = "short"
-                else:
-                    winner = "long"
-                confidence = 0.25
-                _debug_calls["forced"] = "true"
-    elif gemini_valid:
-        logger.debug(f"[CONSENSUS] Dropping signal: Secondary model missing/failed for {coin}")
-        reasons = "Secondary model missing/failed — wait"
-    elif sec_valid:
-        logger.debug(f"[CONSENSUS] Dropping signal: Gemini model missing/failed for {coin}")
-        reasons = "Gemini model missing/failed — wait"
+    if gemini_valid:
+        winner = gemini_result["direction"]
+        confidence = float(gemini_result.get("confidence", 0.5))
+        reasons = f"Gemini: {winner.upper()}({confidence:.2f})"
     else:
-        reasons = "No valid model responses"
+        winner = "wait"
+        confidence = 0.0
+        reasons = "No valid model response"
 
     vote_tally = {"long": 0, "short": 0, "wait": 0}
     for d in details:
         vote_tally[d["direction"]] = vote_tally.get(d["direction"], 0) + 1
 
-    logger.info(f"{coin}: consensus={winner} conf={confidence:.2f} gemini={gemini_valid} secondary={sec_valid} cycle={cycle_id}")
+    logger.info(f"{coin}: gemini={gemini_valid} winner={winner} conf={confidence:.2f} cycle={cycle_id}")
 
-    secondary_provider = provider_info["provider"] if provider_info and secondary_key else None
+    # secondary_provider = provider_info["provider"] if provider_info and secondary_key else None
+    secondary_provider = None
 
     return {
         "direction": winner,

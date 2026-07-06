@@ -1483,45 +1483,45 @@ def coin_key_map():
 
 
 def ai_loop():
-    logger.info("AI engine started")
-    while True:
-        try:
-            redis.set_config("ai_loop_heartbeat", str(time.time()))
-            if not redis.is_bot_running():
-                time.sleep(10)
-                continue
-            pos = redis.get_position()
-            if pos and pos.get("size", 0) != 0:
-                coin = pos.get("coin", "")
-                if coin:
-                    try:
-                        live = hl.get_position(coin)
-                        if not live or float(live.get("szi", 0)) == 0:
-                            logger.info(f"Stale Redis position for {coin} — clearing")
-                            redis.clear_position()
-                            pos = None
-                    except Exception:
-                        pass
-                if pos and pos.get("size", 0) != 0:
-                    time.sleep(30)
-                    continue
-
-            last = redis.get_current_signal()
-            last_gen = float(redis.get_config("last_signal_gen_ts", "0") or "0")
-            last_time = last.get("timestamp", last_gen) if last else last_gen
-            wait = max(0, last_time + AI_LOOP_INTERVAL - time.time())
-            if wait > 0:
-                if wait < 60:
-                    time.sleep(wait)
-                else:
-                    time.sleep(60)
-                continue
-
-            signals = run_multi_asset_signal()
-            aggregate_signals(signals)
-        except Exception as e:
-            logger.exception(f"AI loop error: {e}")
-            time.sleep(60)
+    logger.info("AI engine started (10-min loop DISABLED — ready for event-driven)")
+    # while True:
+    #     try:
+    #         redis.set_config("ai_loop_heartbeat", str(time.time()))
+    #         if not redis.is_bot_running():
+    #             time.sleep(10)
+    #             continue
+    #         pos = redis.get_position()
+    #         if pos and pos.get("size", 0) != 0:
+    #             coin = pos.get("coin", "")
+    #             if coin:
+    #                 try:
+    #                     live = hl.get_position(coin)
+    #                     if not live or float(live.get("szi", 0)) == 0:
+    #                         logger.info(f"Stale Redis position for {coin} — clearing")
+    #                         redis.clear_position()
+    #                         pos = None
+    #                 except Exception:
+    #                     pass
+    #             if pos and pos.get("size", 0) != 0:
+    #                 time.sleep(30)
+    #                 continue
+    #
+    #         last = redis.get_current_signal()
+    #         last_gen = float(redis.get_config("last_signal_gen_ts", "0") or "0")
+    #         last_time = last.get("timestamp", last_gen) if last else last_gen
+    #         wait = max(0, last_time + AI_LOOP_INTERVAL - time.time())
+    #         if wait > 0:
+    #             if wait < 60:
+    #                 time.sleep(wait)
+    #             else:
+    #                 time.sleep(60)
+    #             continue
+    #
+    #         signals = run_multi_asset_signal()
+    #         aggregate_signals(signals)
+    #     except Exception as e:
+    #         logger.exception(f"AI loop error: {e}")
+    #         time.sleep(60)
 
 
 def seed_redis_config():
