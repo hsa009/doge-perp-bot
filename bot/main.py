@@ -71,8 +71,7 @@ def bot_status():
         signal = redis.get_current_signal()
         position = redis.get_position()
         cfg = get_runtime_config()
-        cfg["ai_loop_interval"] = str(AI_LOOP_INTERVAL)
-        remaining = max(0, (signal.get("timestamp", 0) if signal else 0) + AI_LOOP_INTERVAL - time.time())
+        remaining = int(900 - (time.time() % 900))
         active_asset = cfg.get("active_asset", "DOGE")
         pending_asset = redis.get_config("pending_asset", "")
         if pending_asset:
