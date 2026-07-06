@@ -58,11 +58,6 @@ MODELS: dict[str, str] = _build_model_keys()
 MODEL_KEYS: list[str] = list(MODELS.keys())
 
 
-_GEMINI_KEY_RING: list[str] = []
-_GEMINI_KEY_INDEX = 0
-_GEMINI_RING_LOCK = threading.Lock()
-
-
 def _build_gemini_key_ring() -> list[str]:
     from bot.config import COIN_LIST
     keys: list[str] = []
@@ -72,6 +67,11 @@ def _build_gemini_key_ring() -> list[str]:
             keys.append(k)
     logger.info(f"Gemini key ring: {len(keys)} keys from {len(COIN_LIST)} coins")
     return keys
+
+
+_GEMINI_KEY_RING: list[str] = _build_gemini_key_ring()
+_GEMINI_KEY_INDEX = 0
+_GEMINI_RING_LOCK = threading.Lock()
 
 
 def get_model_defs() -> list[dict]:
