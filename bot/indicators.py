@@ -51,6 +51,7 @@ def evaluate_coin_momentum(prices: list[float], tp_pct: float) -> dict:
             "suggestion": "wait",
             "rsi_value": 50.0,
             "logic": "Insufficient initialization data buffer.",
+            "confidence_score": 0.0,
         }
 
     if tp_pct <= 0.005:
@@ -69,12 +70,14 @@ def evaluate_coin_momentum(prices: list[float], tp_pct: float) -> dict:
             "suggestion": "wait",
             "rsi_value": 50.0,
             "logic": "RSI returned as NaN value.",
+            "confidence_score": 0.0,
         }
 
     rsi_slope = current_rsi - previous_rsi
 
     if current_rsi > 53 and rsi_slope > 0:
         suggestion = "long"
+        confidence_score = round((current_rsi - 50) + (rsi_slope * 2), 2)
         logic = (
             f"RSI({period}) is bullish at {current_rsi:.1f} with positive"
             f" momentum slope ({rsi_slope:+.2f}). Supports a {tp_pct * 100:.2f}%"
@@ -82,6 +85,7 @@ def evaluate_coin_momentum(prices: list[float], tp_pct: float) -> dict:
         )
     elif current_rsi < 47 and rsi_slope < 0:
         suggestion = "short"
+        confidence_score = round((50 - current_rsi) + (abs(rsi_slope) * 2), 2)
         logic = (
             f"RSI({period}) is bearish at {current_rsi:.1f} with negative"
             f" momentum slope ({rsi_slope:+.2f}). Supports a {tp_pct * 100:.2f}%"
@@ -89,6 +93,7 @@ def evaluate_coin_momentum(prices: list[float], tp_pct: float) -> dict:
         )
     else:
         suggestion = "wait"
+        confidence_score = 0.0
         logic = (
             f"RSI({period}) is stalling at {current_rsi:.1f} (slope:"
             f" {rsi_slope:+.2f}). No velocity setup detected."
@@ -98,4 +103,5 @@ def evaluate_coin_momentum(prices: list[float], tp_pct: float) -> dict:
         "suggestion": suggestion,
         "rsi_value": round(float(current_rsi), 2),
         "logic": logic,
+        "confidence_score": confidence_score,
     }

@@ -83,10 +83,11 @@ export default function Dashboard() {
   const [forcing, setForcing] = useState(false)
   const [selectedCoin, setSelectedCoin] = useState("DOGE")
   const [enabledCoins, setEnabledCoins] = useState<string[]>([])
-  const [multiData, setMultiData] = useState<{ signals: Record<string, any> | null; prompts: Record<string, string> | null; winner: string }>({
+  const [multiData, setMultiData] = useState<{ signals: Record<string, any> | null; prompts: Record<string, string> | null; winner: string; batch_winner: any }>({
     signals: null,
     prompts: null,
     winner: "",
+    batch_winner: null,
   })
 
   const fetchStatus = useCallback(async () => {
@@ -114,7 +115,7 @@ export default function Dashboard() {
       const resp = await fetch("/api/bot/multi-asset-data")
       if (resp.ok) {
         const data = await resp.json()
-        setMultiData({ signals: data.signals || null, prompts: data.prompts || null, winner: data.winner || "" })
+        setMultiData({ signals: data.signals || null, prompts: data.prompts || null, winner: data.winner || "", batch_winner: data.batch_winner || null })
       }
     } catch {}
   }, [])
@@ -247,7 +248,7 @@ export default function Dashboard() {
 
       <MultiCoinSignals
         signals={multiData.signals}
-        winner={multiData.winner}
+        winner={multiData.batch_winner?.coin || multiData.winner}
         selectedCoin={selectedCoin}
         onSelectCoin={setSelectedCoin}
         enabledCoins={enabledCoins}
@@ -259,17 +260,18 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
           <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-2">Selected Asset</h3>
-          {multiData.winner && multiData.signals?.[multiData.winner] ? (
+          {multiData.batch_winner || (multiData.winner && multiData.signals?.[multiData.winner]) ? (
             (() => {
-              const ws = multiData.signals[multiData.winner]
-              const dir = ws.direction
-              const conf = ws.confidence ?? 0
-              const confPct = Math.min(Math.max(conf * 100, 0), 100)
+              const bw = multiData.batch_winner
+              const ws = bw ? (multiData.signals?.[bw.coin] || {}) : (multiData.signals?.[multiData.winner] || {})
+              const dir = bw ? bw.suggestion : (ws.direction || ws.rsi?.suggestion || "")
+              const score = bw ? bw.confidence_score : (ws.confidence ?? 0)
+              const scorePct = Math.min(Math.max(score / 10 * 100, 0), 100)
               return (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-lg font-bold text-amber-400">
-                      {multiData.winner} ⭐
+                      {bw ? bw.coin : multiData.winner} ⭐
                     </span>
                     <span
                       className={
@@ -283,20 +285,20 @@ export default function Dashboard() {
                   <div className="flex items-center gap-1.5">
                     <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-500 ${confPct >= 70 ? "bg-green-500" : confPct >= 40 ? "bg-yellow-500" : "bg-zinc-600"}`}
-                        style={{ width: `${confPct}%` }}
+                        className={`h-full rounded-full transition-all duration-500 ${scorePct >= 70 ? "bg-green-500" : scorePct >= 40 ? "bg-yellow-500" : "bg-zinc-600"}`}
+                        style={{ width: `${scorePct}%` }}
                       />
                     </div>
-                    <span className="font-mono text-[11px] text-zinc-400 w-8 text-right">{confPct}%</span>
+                    <span className="font-mono text-[11px] text-zinc-400 w-10 text-right">{score.toFixed(2)}</span>
                   </div>
-                  {ws.reasoning && (
-                    <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{ws.reasoning}</p>
+                  {ws.rsi?.logic && (
+                    <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{ws.rsi.logic}</p>
                   )}
                 </div>
               )
             })()
           ) : (
-            <p className="text-sm text-zinc-500">Waiting for AI cycle...</p>
+            <p className="text-sm text-zinc-500">Waiting for 15m candle close...</p>
           )}
         </div>
         <PnLSummary totalPnl={stats.total_pnl} winRate={stats.win_rate} totalTrades={stats.total_trades} />
