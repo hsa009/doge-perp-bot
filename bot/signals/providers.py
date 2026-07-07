@@ -355,10 +355,6 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5, coin_keys: li
         last = None
         for idx, key in enumerate(coin_keys):
             key_label = f"gemini_{'primary' if idx == 0 else 'backup'}#{idx}"
-            wait = _gemini_rate_acquire()
-            if wait > 0:
-                logger.info(f"Gemini rate limit reached — sleeping {wait:.0f}s")
-                time.sleep(wait)
             last = call_gemini_http(key, key_label, prompt)
             if last and "_error" not in last:
                 return last
