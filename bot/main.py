@@ -29,6 +29,7 @@ from bot.signals import providers as signal_engine
 from bot.signals.providers import get_model_defs
 from bot.signals.rules import ema as ema_func
 from bot.market_data import get_market_context, fetch_all_market_data
+from bot.discord_bot import send_trade_alert_to_queue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -733,6 +734,7 @@ def open_trade(signal: dict, coin: str = "DOGE") -> bool:
         except Exception:
             pass
         logger.info(f"Trade opened successfully")
+        send_trade_alert_to_queue("position_opened", coin, signal["direction"], entry_price)
         return True
     except Exception as e:
         logger.exception(f"open_trade error: {e}")
@@ -759,6 +761,8 @@ def close_position_in_db(coin: str = "DOGE"):
                 "net_pnl_usd": pnl,
             })
         db.log("INFO", f"Trade closed by trigger order ({coin})")
+        event_type = "tp_hit" if pnl >= 0 else "sl_hit"
+        send_trade_alert_to_queue(event_type, coin, direction, exit_price, pnl)
     except Exception as ex:
         logger.exception(f"close_position_in_db error: {ex}")
     redis.clear_position()
