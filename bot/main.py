@@ -1634,6 +1634,14 @@ def init_bot():
     t3 = threading.Thread(target=_run_live_pipeline, daemon=True)
     t3.start()
 
+    try:
+        from bot.discord_bot import run_discord_bot
+        t4 = threading.Thread(target=run_discord_bot, daemon=True)
+        t4.start()
+        logger.info("Discord bot thread started")
+    except Exception as e:
+        logger.warning(f"Discord bot not available: {e}")
+
 
 t_init = threading.Thread(target=init_bot, daemon=True)
 t_init.start()
