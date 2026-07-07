@@ -348,8 +348,25 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         return {"_error": f"EXC_{e}"}
 
 
-def call_gemini_http_with_retry(prompt: str, max_retries: int = 5) -> dict | None:
+def call_gemini_http_with_retry(prompt: str, max_retries: int = 5, coin_keys: list[str] | None = None) -> dict | None:
     global _GEMINI_KEY_RING, _GEMINI_KEY_INDEX
+
+    if coin_keys:
+        last = None
+        for idx, key in enumerate(coin_keys):
+            key_label = f"gemini_{'primary' if idx == 0 else 'backup'}#{idx}"
+            wait = _gemini_rate_acquire()
+            if wait > 0:
+                logger.info(f"Gemini rate limit reached — sleeping {wait:.0f}s")
+                time.sleep(wait)
+            last = call_gemini_http(key, key_label, prompt)
+            if last and "_error" not in last:
+                return last
+            err = str(last.get("_error", "")) if last else "None"
+            if idx < len(coin_keys) - 1:
+                logger.info(f"{key_label}: {err} -> trying backup")
+        logger.warning(f"All coin_keys exhausted — last error: {err}")
+        return last
 
     if not _GEMINI_KEY_RING:
         _GEMINI_KEY_RING = _build_gemini_key_ring()
@@ -546,7 +563,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
 
     # Gemini voter
     if gemini_keys or _GEMINI_KEY_RING:
-        voter_tasks.append(("gemini", call_gemini_http_with_retry, (prompt,)))
+        voter_tasks.append(("gemini", call_gemini_http_with_retry, (prompt, 5, gemini_keys)))
 
     # # Secondary voter (with throttle, staleness check) — DISABLED
     # def _call_secondary() -> dict | None:
