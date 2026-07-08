@@ -1262,13 +1262,13 @@ def aggregate_signals(signals: dict[str, dict]) -> dict | None:
 
     try:
         redis.client.set("multi_asset_signals", json.dumps({
-            k: {"direction": v.get("direction"), "confidence": v.get("confidence"),
-                "reasoning": v.get("reasoning", "")[:500],
+            k: {"direction": v.get("direction", "wait") or "wait", "confidence": v.get("confidence", 0.0) or 0.0,
+                "reasoning": str(v.get("reasoning", "") or "")[:500],
                 "secondary_provider": v.get("secondary_provider")}
             for k, v in signals.items()
         }))
         redis.client.set("multi_asset_prompts", json.dumps({
-            k: v.get("prompt", "")
+            k: str(v.get("prompt", "") or "")
             for k, v in signals.items()
         }))
     except Exception as e:
@@ -1541,6 +1541,8 @@ def ai_loop():
 
             signals = run_multi_asset_signal()
             aggregate_signals(signals)
+
+            redis.set_config("ai_loop_ready", "1")
         except Exception as e:
             logger.exception(f"AI loop error: {e}")
             time.sleep(60)
