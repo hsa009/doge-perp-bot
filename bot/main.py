@@ -1516,17 +1516,16 @@ def coin_key_map():
 
 def ai_loop():
     logger.info("AI engine started (15-min cycle)")
+    first = True
     while True:
         try:
             redis.set_config("ai_loop_heartbeat", str(time.time()))
 
-            remaining = 900 - (time.time() % 900)
-            if remaining > 5:
-                time.sleep(remaining)
-
-            if not redis.is_bot_running():
-                time.sleep(10)
-                continue
+            if not first:
+                remaining = 900 - (time.time() % 900)
+                if remaining > 5:
+                    time.sleep(remaining)
+            first = False
 
             signals = run_multi_asset_signal()
             aggregate_signals(signals)
