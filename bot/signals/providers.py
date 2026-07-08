@@ -352,12 +352,20 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5, coin_keys: li
         last = None
         for idx, key in enumerate(coin_keys):
             key_label = f"gemini_{'primary' if idx == 0 else 'backup'}#{idx}"
-            last = call_gemini_http(key, key_label, prompt)
-            if last and "_error" not in last:
-                return last
+            for attempt in range(3):
+                last = call_gemini_http(key, key_label, prompt)
+                if last and "_error" not in last:
+                    return last
+                if last and "HTTP_429" in str(last.get("_error", "")):
+                    if attempt < 2:
+                        delay = 60 + 5 * attempt
+                        logger.info(f"{key_label}: 429 -> retry in {delay}s (attempt {attempt+1}/3)")
+                        time.sleep(delay)
+                        continue
+                break
             err = str(last.get("_error", "")) if last else "None"
             if idx < len(coin_keys) - 1:
-                logger.info(f"{key_label}: {err} -> trying backup")
+                logger.info(f"{key_label}: {err} -> trying backup key")
         logger.warning(f"All coin_keys exhausted — last error: {err}")
         return last
 
@@ -366,11 +374,6 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5, coin_keys: li
     if not _GEMINI_KEY_RING:
         logger.error("No Gemini keys available in key ring")
         return None
-
-    wait = _gemini_rate_acquire()
-    if wait > 0:
-        logger.info(f"Gemini rate limit reached — sleeping {wait:.0f}s")
-        time.sleep(wait)
 
     last = None
     for attempt in range(max_retries):
