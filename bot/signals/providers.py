@@ -422,25 +422,15 @@ def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
     last = None
     for idx, (ptype, key) in enumerate(coin_keys or []):
         label = f"{ptype}_{'primary' if idx == 0 else 'backup'}#{idx}"
-        for attempt in range(3):
-            if ptype == "gemini":
-                _gemini_rate_acquire()
-                last = call_gemini_http(key, label, prompt)
-            else:
-                _openrouter_rate_acquire()
-                last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label, timeout=20)
-            if last and "_error" not in last:
-                return last
-            if last and "HTTP_429" in str(last.get("_error", "")):
-                if attempt < 2:
-                    delay = 60 + 5 * attempt
-                    logger.info(f"{label}: 429 -> retry in {delay}s (attempt {attempt+1}/3)")
-                    time.sleep(delay)
-                    continue
-            break
-        if idx < len(coin_keys) - 1:
-            err = str(last.get("_error", "")) if last else "None"
-            logger.info(f"{label}: {err} -> trying next key")
+        if ptype == "gemini":
+            _gemini_rate_acquire()
+            last = call_gemini_http(key, label, prompt)
+        else:
+            _openrouter_rate_acquire()
+            last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label, timeout=20)
+        if last and "_error" not in last:
+            return last
+        time.sleep(5)
     return last
 
 
