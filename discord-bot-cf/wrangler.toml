@@ -1,0 +1,13 @@
+name = "discord-bot"
+main = "main.py"
+compatibility_flags = ["python_workers"]
+
+[vars]
+DISCORD_APPLICATION_ID = ""
+DISCORD_PUBLIC_KEY = ""
+DISCORD_TOKEN = ""
+REDIS_URL = ""
+DISCORD_WEBHOOK_URL = ""
+
+[triggers]
+crons = ["*/1 * * * *"]
