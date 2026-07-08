@@ -30,10 +30,18 @@ REMOVED_COINS = ("PEPE", "BONK", "FLOKI", "BOME")
 COIN_LIST = os.environ.get("COIN_LIST", "WIF,POPCAT,DOGE,SUI,JUP,PYTH,SOL").split(",")
 
 
-def get_coin_gemini_keys(coin: str) -> list[str]:
-    primary = os.environ.get(f"{coin}_GEMINI_KEY", "")
-    backup = os.environ.get(f"{coin}_GEMINI_BACKUP", "")
-    return [k for k in [primary, backup] if k]
+def get_coin_api_keys(coin: str) -> list[tuple[str, str]]:
+    keys = []
+    g1 = os.environ.get(f"{coin}_GEMINI_KEY", "")
+    if g1:
+        keys.append(("gemini", g1))
+    g2 = os.environ.get(f"{coin}_GEMINI_BACKUP", "")
+    if g2:
+        keys.append(("gemini", g2))
+    o3 = os.environ.get(f"{coin}_OPENROUTER_BACKUP", "")
+    if o3:
+        keys.append(("openrouter", o3))
+    return keys
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 

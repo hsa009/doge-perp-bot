@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import httpx
 import pandas as pd
 
-from bot.config import AI_MODELS, get_coin_gemini_keys
+from bot.config import AI_MODELS, get_coin_api_keys
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,26 @@ def _build_gemini_key_ring() -> list[str]:
 _GEMINI_KEY_RING: list[str] = _build_gemini_key_ring()
 _GEMINI_KEY_INDEX = 0
 _GEMINI_RING_LOCK = threading.Lock()
+
+OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "qwen/qwen3-next-80b-a3b-instruct:free"
+
+_OPENROUTER_LAST_CALL = 0.0
+_openrouter_rate_lock = threading.Lock()
+
+
+def _openrouter_rate_acquire():
+    global _OPENROUTER_LAST_CALL
+    with _openrouter_rate_lock:
+        now = time.time()
+        elapsed = now - _OPENROUTER_LAST_CALL
+        if elapsed < 2.0:
+            wait = 2.0 - elapsed
+            time.sleep(wait)
+            _OPENROUTER_LAST_CALL = now + wait
+            return wait
+        _OPENROUTER_LAST_CALL = now
+        return 0.0
 
 
 def get_model_defs() -> list[dict]:
@@ -398,6 +418,32 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5, coin_keys: li
     return last
 
 
+def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
+    last = None
+    for idx, (ptype, key) in enumerate(coin_keys or []):
+        label = f"{ptype}_{'primary' if idx == 0 else 'backup'}#{idx}"
+        for attempt in range(3):
+            if ptype == "gemini":
+                _gemini_rate_acquire()
+                last = call_gemini_http(key, label, prompt)
+            else:
+                _openrouter_rate_acquire()
+                last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label, timeout=60)
+            if last and "_error" not in last:
+                return last
+            if last and "HTTP_429" in str(last.get("_error", "")):
+                if attempt < 2:
+                    delay = 60 + 5 * attempt
+                    logger.info(f"{label}: 429 -> retry in {delay}s (attempt {attempt+1}/3)")
+                    time.sleep(delay)
+                    continue
+            break
+        if idx < len(coin_keys) - 1:
+            err = str(last.get("_error", "")) if last else "None"
+            logger.info(f"{label}: {err} -> trying next key")
+    return last
+
+
 def _extract_json(text: str) -> str:
     # Find all balanced JSON objects and return the last valid one
     candidates: list[str] = []
@@ -513,8 +559,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                    consecutive_waits: int = 0,
                    current_pnl: float | None = None,
                    market_context: dict | None = None,
-                   gemini_api_keys: list[str] | None = None,
-                   db=None,
+                    api_keys: list[tuple[str, str]] | None = None,
+                    db=None,
                    macro_trend: str = "mixed",
                    liq_price: float = 0.0,
                    liq_dist_pct: float = 0.0) -> dict:
@@ -540,7 +586,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
                           macro_trend=macro_trend, liq_price=liq_price, liq_dist_pct=liq_dist_pct)
 
     cycle_id = uuid.uuid4().hex[:12]
-    gemini_keys = gemini_api_keys if gemini_api_keys is not None else []
+    provider_api_keys = api_keys if api_keys is not None else []
 
     _debug_calls: dict[str, str] = {}
 
@@ -557,9 +603,9 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     # --- Build voter tasks ---
     voter_tasks: list[tuple[str, callable, tuple]] = []
 
-    # Gemini voter
-    if gemini_keys or _GEMINI_KEY_RING:
-        voter_tasks.append(("gemini", call_gemini_http_with_retry, (prompt, 5, gemini_keys)))
+    # Primary provider (Gemini → Gemini backup → OpenRouter backup)
+    if provider_api_keys:
+        voter_tasks.append(("primary", call_provider_with_retry, (prompt, 5, provider_api_keys)))
 
     # # Secondary voter (with throttle, staleness check) — DISABLED
     # def _call_secondary() -> dict | None:

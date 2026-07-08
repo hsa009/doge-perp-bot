@@ -19,7 +19,7 @@ from bot.config import (
     AI_LOOP_INTERVAL,
     ACTIVE_ASSET,
     COIN_LIST,
-    get_coin_gemini_keys,
+    get_coin_api_keys,
 )
 from bot.hyperliquid_client import HyperliquidClient
 from bot.order_executor import OrderExecutor
@@ -1142,7 +1142,7 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
         market_context = get_market_context(hl, coin)
 
     enabled_models: list[str] | None = []
-    gemini_keys = get_coin_gemini_keys(coin)
+    api_keys = get_coin_api_keys(coin)
 
     closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
     market_context["recent_closes"] = closes
@@ -1169,7 +1169,7 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
         consecutive_waits=0,
         current_pnl=current_pnl,
         market_context=market_context,
-        gemini_api_keys=gemini_keys,
+        api_keys=api_keys,
         db=db,
         macro_trend=macro_trend,
         liq_price=liq_price,
@@ -1463,13 +1463,15 @@ def test_db():
 @app.route("/api/v1/test-gemini")
 def test_gemini():
     import os, json, httpx
-    from bot.config import get_coin_gemini_keys, COIN_LIST
+    from bot.config import get_coin_api_keys, COIN_LIST
 
     seen = set()
     all_labels: list[tuple[str, str]] = []
 
     for coin in COIN_LIST:
-        for i, k in enumerate(get_coin_gemini_keys(coin)):
+        for i, (ptype, k) in enumerate(get_coin_api_keys(coin)):
+            if ptype != "gemini":
+                continue
             if k and k not in seen:
                 seen.add(k)
                 all_labels.append((k, f"{coin}#{i}"))
@@ -1504,10 +1506,10 @@ def test_gemini():
 
 @app.route("/api/v1/coin-key-map")
 def coin_key_map():
-    from bot.config import get_coin_gemini_keys, COIN_LIST
+    from bot.config import get_coin_api_keys, COIN_LIST
     mapping = {}
     for coin in COIN_LIST:
-        keys = get_coin_gemini_keys(coin)
+        keys = [k for p, k in get_coin_api_keys(coin) if k]
         mapping[coin] = {"keys": [k[:12]+"..."+k[-4:] for k in keys if k], "count": len(keys)}
     return jsonify({"mapping": mapping, "total_coins": len(mapping)})
 
