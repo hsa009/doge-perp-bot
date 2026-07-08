@@ -37,8 +37,8 @@ class HyperliquidClient:
             self.address = "0x0000000000000000000000000000000000000000"
             return
         self.wallet = Account.from_key(PHANTOM_EVM_PRIVATE_KEY)
-        self.info = _retry(lambda: Info("https://api.hyperliquid.xyz", skip_ws=True))
-        self.exchange = _retry(lambda: Exchange(self.wallet, "https://api.hyperliquid.xyz"))
+        self.info = _retry(lambda: Info("https://api.hyperliquid.xyz", skip_ws=True, timeout=20))
+        self.exchange = _retry(lambda: Exchange(self.wallet, "https://api.hyperliquid.xyz", timeout=20))
         self.address = self.wallet.address
 
     def get_balance(self) -> dict:

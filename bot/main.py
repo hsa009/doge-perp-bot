@@ -1217,27 +1217,15 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
     signals: dict[str, dict] = {}
     for coin in coins:
         ctx = market_data.get(coin)
-        _result = [None]
-
-        def _run(c, m):
-            try:
-                _result[0] = _run_single_coin_signal(c, m)
-            except Exception as e:
-                logger.warning(f"{c}: signal error: {e}")
-
-        t = threading.Thread(target=_run, args=(coin, ctx))
-        t.daemon = True
-        t.start()
-        t.join(timeout=90)
-        if t.is_alive():
-            logger.warning(f"{coin}: signal timed out after 90s — skipping")
-
-        result = _result[0]
-        if result:
-            signals[coin] = result
-            logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
-        else:
-            logger.warning(f"{coin}: no signal returned")
+        try:
+            result = _run_single_coin_signal(coin, ctx)
+            if result:
+                signals[coin] = result
+                logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
+            else:
+                logger.warning(f"{coin}: no signal returned")
+        except Exception as e:
+            logger.warning(f"{coin}: signal error: {e}")
         time.sleep(15)
 
     logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signals of {len(coins)} ===")
