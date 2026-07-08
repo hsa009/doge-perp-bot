@@ -21,13 +21,21 @@ async def _tg_send(chat_id, text, token):
     )
 
 
+async def _redis_headers(env):
+    token = getattr(env, "REDIS_TOKEN", "") or ""
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
+
+
 async def _redis_get(key, env):
     redis_url = getattr(env, "REDIS_URL", "") or ""
     if not redis_url:
         return None
+    headers = await _redis_headers(env)
     resp = await js.fetch(
         f"{redis_url}/get/{key}",
-        js.JSON.parse(json.dumps({"method": "GET"})),
+        js.JSON.parse(json.dumps({"method": "GET", "headers": headers})),
     )
     if resp.status != 200:
         return None
@@ -94,9 +102,11 @@ async def _redis_lpop(key, env):
     redis_url = getattr(env, "REDIS_URL", "") or ""
     if not redis_url:
         return None
+    headers = await _redis_headers(env)
+    headers["Content-Type"] = "application/json"
     resp = await js.fetch(
         f"{redis_url}/lpop/{key}",
-        js.JSON.parse(json.dumps({"method": "POST"})),
+        js.JSON.parse(json.dumps({"method": "POST", "headers": headers})),
     )
     if resp.status != 200:
         return None
