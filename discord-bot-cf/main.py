@@ -15,11 +15,11 @@ REDIS_TOKEN: str = ""
 
 def _init(env):
     global DISCORD_PUBLIC_KEY, DISCORD_TOKEN, DISCORD_WEBHOOK_URL, APPLICATION_ID, REDIS_REST, REDIS_TOKEN
-    DISCORD_PUBLIC_KEY = getattr(env, "DISCORD_PUBLIC_KEY", "") or ""
-    DISCORD_TOKEN = getattr(env, "DISCORD_TOKEN", "") or ""
-    DISCORD_WEBHOOK_URL = getattr(env, "DISCORD_WEBHOOK_URL", "") or ""
-    APPLICATION_ID = getattr(env, "DISCORD_APPLICATION_ID", "") or ""
-    url = getattr(env, "REDIS_URL", "") or ""
+    DISCORD_PUBLIC_KEY = (getattr(env, "DISCORD_PUBLIC_KEY", "") or "").strip()
+    DISCORD_TOKEN = (getattr(env, "DISCORD_TOKEN", "") or "").strip()
+    DISCORD_WEBHOOK_URL = (getattr(env, "DISCORD_WEBHOOK_URL", "") or "").strip()
+    APPLICATION_ID = (getattr(env, "DISCORD_APPLICATION_ID", "") or "").strip()
+    url = (getattr(env, "REDIS_URL", "") or "").strip()
     rest = url.replace("redis://", "https://")
     if rest.endswith(":6379"):
         rest = rest[:-5]
