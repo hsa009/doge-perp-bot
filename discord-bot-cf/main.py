@@ -60,7 +60,6 @@ async def on_fetch(request, env):
     if text == "/dashboard":
         bot_key = await _redis_get("bot:running", env)
         pos = await _redis_get("position:current", env)
-        bal = await _redis_get("balance:account", env)
 
         lines = ["*Trading Dashboard*", ""]
 
@@ -73,19 +72,17 @@ async def on_fetch(request, env):
             p = json.loads(pos_data)
             lines.append("*Position:*")
             lines.append(f"Coin: {p.get('coin', 'N/A')}")
-            lines.append(f"Side: {p.get('side', 'N/A')}")
-            lines.append(f"Size: {p.get('sz', 'N/A')}")
-            lines.append(f"Entry: {p.get('entry_px', 'N/A')}")
-            lines.append(f"PnL: {p.get('pnl', 'N/A')}")
+            lines.append(f"Direction: {p.get('direction', 'N/A')}")
+            lines.append(f"Size: {p.get('size', 'N/A')}")
+            lines.append(f"Entry: {p.get('entry_price', 'N/A')}")
+            lines.append(f"PnL: {p.get('unrealized_pnl', 'N/A')}")
+            bal_val = p.get("account_value")
+            if bal_val is not None:
+                lines.append("")
+                lines.append(f"*Balance:* {bal_val}")
         else:
             lines.append("*Position:* No open position")
-
-        lines.append("")
-        bal_data = (bal or {}).get("result")
-        if bal_data:
-            b = json.loads(bal_data)
-            lines.append(f"*Balance:* {b.get('total', 'N/A')}")
-        else:
+            lines.append("")
             lines.append("*Balance:* N/A")
 
         await _tg_send(chat_id, "\n".join(lines), token)
