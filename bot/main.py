@@ -1215,18 +1215,30 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
         logger.warning(f"Async market data fetch failed ({e}) — falling back to per-coin sync fetch")
 
     signals: dict[str, dict] = {}
-    for coin in coins:
-        ctx = market_data.get(coin)
+    results_lock = threading.Lock()
+
+    def _run_coin(coin, ctx):
         try:
             result = _run_single_coin_signal(coin, ctx)
             if result:
-                signals[coin] = result
+                with results_lock:
+                    signals[coin] = result
                 logger.info(f"{coin}: {result['direction']} ({result['confidence']:.2f})")
             else:
                 logger.warning(f"{coin}: no signal returned")
         except Exception as e:
             logger.warning(f"{coin}: signal error: {e}")
-        time.sleep(15)
+
+    threads = []
+    for coin in coins:
+        ctx = market_data.get(coin)
+        t = threading.Thread(target=_run_coin, args=(coin, ctx))
+        t.daemon = True
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join(timeout=120)
 
     logger.info(f"=== MULTI-ASSET SIGNAL RUN END: {len(signals)} signals of {len(coins)} ===")
     return signals
