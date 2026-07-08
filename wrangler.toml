@@ -1,5 +1,6 @@
 name = "discord-bot"
 main = "discord-bot-cf/main.py"
+compatibility_date = "2026-07-08"
 compatibility_flags = ["python_workers"]
 
 [vars]
