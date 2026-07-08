@@ -21,12 +21,12 @@ async def _tg_send(chat_id, text, token):
     )
 
 
-async def _fetch_status(env):
+async def _fetch_api(path, env):
     base = getattr(env, "HF_SPACE_URL", "") or ""
     if not base:
         return None
     resp = await js.fetch(
-        f"{base}/api/v1/bot/status",
+        f"{base}{path}",
         js.JSON.parse(json.dumps({"method": "GET"})),
     )
     if resp.status != 200:
@@ -58,7 +58,7 @@ async def on_fetch(request, env):
     text = msg.get("text", "")
 
     if text == "/dashboard":
-        status = await _fetch_status(env)
+        status = await _fetch_api("/api/v1/bot/status", env)
 
         lines = ["*Trading Dashboard*", ""]
         running = (status or {}).get("running", False)
@@ -75,6 +75,26 @@ async def on_fetch(request, env):
             lines.append(f"{direction}  {size} {coin}  ${entry:.5f}  ${pnl:.2f}")
         else:
             lines.append("No open position")
+
+        await _tg_send(chat_id, "\n".join(lines), token)
+
+    elif text == "/signal":
+        data = await _fetch_api("/api/v1/bot/multi-asset-data", env)
+
+        lines = ["*AI Signals*", ""]
+        signals = (data or {}).get("signals", {})
+        for coin in sorted(signals.keys()):
+            s = signals[coin]
+            d = s.get("direction", "?")
+            c = s.get("confidence", 0)
+            if s.get("disabled", False):
+                lines.append(f"{coin} — DISABLED")
+            else:
+                lines.append(f"{coin}: {d.upper()} ({c:.2f})")
+
+        lines.append("")
+        winner = (data or {}).get("winner", "") or ""
+        lines.append(f"Winner: {winner or '—'}")
 
         await _tg_send(chat_id, "\n".join(lines), token)
 
