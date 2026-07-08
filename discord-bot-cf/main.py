@@ -1,9 +1,7 @@
-import hashlib
 import json
-import os
 import time
 
-from workers import Response, fetch
+import js
 
 from ed25519 import verify
 
@@ -11,39 +9,46 @@ DISCORD_PUBLIC_KEY: str = ""
 DISCORD_TOKEN: str = ""
 DISCORD_WEBHOOK_URL: str = ""
 APPLICATION_ID: str = ""
-REDIS_URL: str = ""
 REDIS_REST: str = ""
 REDIS_TOKEN: str = ""
 
 
 def _init(env):
-    global DISCORD_PUBLIC_KEY, DISCORD_TOKEN, DISCORD_WEBHOOK_URL, APPLICATION_ID, REDIS_URL, REDIS_REST, REDIS_TOKEN
+    global DISCORD_PUBLIC_KEY, DISCORD_TOKEN, DISCORD_WEBHOOK_URL, APPLICATION_ID, REDIS_REST, REDIS_TOKEN
     DISCORD_PUBLIC_KEY = env.get("DISCORD_PUBLIC_KEY", "")
     DISCORD_TOKEN = env.get("DISCORD_TOKEN", "")
     DISCORD_WEBHOOK_URL = env.get("DISCORD_WEBHOOK_URL", "")
     APPLICATION_ID = env.get("DISCORD_APPLICATION_ID", "")
-    REDIS_URL = env.get("REDIS_URL", "")
-    rest = REDIS_URL.replace("redis://", "https://")
+    url = env.get("REDIS_URL", "")
+    rest = url.replace("redis://", "https://")
     if rest.endswith(":6379"):
         rest = rest[:-5]
-    user, rest = (rest.split("@", 1) if "@" in rest else ("", rest))
-    REDIS_REST = rest
-    REDIS_TOKEN = (user.split(":", 1)[1] if ":" in user else "")
+    if "@" in rest:
+        user, host = rest.split("@", 1)
+        REDIS_REST = f"https://{host}"
+        REDIS_TOKEN = user.split(":", 1)[1] if ":" in user else ""
+    else:
+        REDIS_REST = rest
+        REDIS_TOKEN = ""
 
 
 async def _redis(*args):
-    body = json.dumps(args).encode()
-    resp = await fetch(
-        REDIS_REST,
-        method="POST",
-        body=body,
-        headers={
-            "Authorization": f"Bearer {REDIS_TOKEN}",
-            "Content-Type": "application/json",
-        },
+    body = json.dumps([*args])
+    opts = js.JSON.parse(
+        json.dumps({
+            "method": "POST",
+            "body": body,
+            "headers": {
+                "Authorization": f"Bearer {REDIS_TOKEN}",
+                "Content-Type": "application/json",
+            },
+        })
     )
+    resp = await js.fetch(REDIS_REST, opts)
     text = await resp.text()
-    return json.loads(text) if text else None
+    if not text:
+        return None
+    return json.loads(text).get("result")
 
 
 def _verify_request(body: bytes, signature: str, timestamp: str) -> bool:
@@ -58,10 +63,10 @@ def _verify_request(body: bytes, signature: str, timestamp: str) -> bool:
 
 
 async def _embed_dashboard() -> dict:
-    embed = {"color": 0x3498DB, "title": "🤖 Trading Bot Dashboard", "fields": []}
+    embed: dict = {"color": 0x3498DB, "title": "\U0001f916 Trading Bot Dashboard", "fields": []}
 
     running = await _redis("GET", "bot:running")
-    status = "🟢 Running" if running == "1" else "🔴 Stopped"
+    status = "\U0001f7e2 Running" if running == "1" else "\U0001f534 Stopped"
     embed["fields"].append({"name": "Status", "value": status, "inline": True})
 
     hb = await _redis("GET", "config:ai_loop_heartbeat")
@@ -148,34 +153,54 @@ def _build_alert_embed(alert: dict) -> dict:
 async def _send_webhook(embed: dict):
     if not DISCORD_WEBHOOK_URL:
         return
-    body = json.dumps({"embeds": [embed]}).encode()
+    body = json.dumps({"embeds": [embed]})
     try:
-        await fetch(
+        await js.fetch(
             DISCORD_WEBHOOK_URL,
-            method="POST",
-            body=body,
-            headers={"Content-Type": "application/json"},
+            js.JSON.parse(
+                json.dumps({
+                    "method": "POST",
+                    "body": body,
+                    "headers": {"Content-Type": "application/json"},
+                })
+            ),
         )
     except Exception:
         pass
 
 
+def _json_response(data: dict, status: int = 200):
+    return js.Response.new(
+        json.dumps(data),
+        js.JSON.parse(
+            json.dumps({
+                "status": status,
+                "headers": {"Content-Type": "application/json"},
+            })
+        ),
+    )
+
+
 async def on_fetch(request, env):
     _init(env)
-    method = str(getattr(request, "method", "GET")).upper()
-    url = str(getattr(request, "url", "/"))
+    url = str(request.url)
+    method = str(request.method).upper()
 
-    if method == "POST" and ("/interaction" in url or url.endswith("/interaction")):
-        raw = await request.bytes() if hasattr(request, "bytes") else (await request.body)
-        sig = (request.headers.get("X-Signature-Ed25519") or "").strip()
-        ts = (request.headers.get("X-Signature-Timestamp") or "").strip()
+    if method == "POST" and "/interaction" in url:
+        text = await request.text()
+        raw = text.encode("utf-8")
+        sig = str(request.headers.get("X-Signature-Ed25519") or "").strip()
+        ts = str(request.headers.get("X-Signature-Timestamp") or "").strip()
 
         if not _verify_request(raw, sig, ts):
-            return Response("Invalid signature", status=401)
+            return js.Response.new(
+                "Invalid signature",
+                js.JSON.parse(json.dumps({"status": 401})),
+            )
 
-        payload = json.loads(raw) if isinstance(raw, bytes) else raw
+        payload = json.loads(text)
         if payload.get("type") == 1:
-            return Response(json.dumps({"type": 1}), headers={"Content-Type": "application/json"})
+            return _json_response({"type": 1})
 
         if payload.get("type") == 2:
             name = payload.get("data", {}).get("name", "")
@@ -183,24 +208,22 @@ async def on_fetch(request, env):
             if name == "dashboard":
                 try:
                     embed = await _embed_dashboard()
-                    return Response(
-                        json.dumps({"type": 4, "data": {"embeds": [embed]}}),
-                        headers={"Content-Type": "application/json"},
-                    )
+                    return _json_response({"type": 4, "data": {"embeds": [embed]}})
                 except Exception as e:
-                    return Response(
-                        json.dumps({"type": 4, "data": {"content": f"\u274c Error: {e}", "flags": 64}}),
-                        headers={"Content-Type": "application/json"},
+                    return _json_response(
+                        {"type": 4, "data": {"content": f"\u274c Error: {e}", "flags": 64}},
                     )
 
-            return Response(
-                json.dumps({"type": 4, "data": {"content": f"Unknown command: {name}", "flags": 64}}),
-                headers={"Content-Type": "application/json"},
+            return _json_response(
+                {"type": 4, "data": {"content": f"Unknown command: {name}", "flags": 64}},
             )
 
-        return Response("Bad request", status=400)
+        return js.Response.new(
+            "Bad request",
+            js.JSON.parse(json.dumps({"status": 400})),
+        )
 
-    return Response("OK", status=200)
+    return js.Response.new("OK", js.JSON.parse(json.dumps({"status": 200})))
 
 
 async def on_cron(event, env):
@@ -212,9 +235,6 @@ async def on_cron(event, env):
             break
         if not raw:
             break
-        if isinstance(raw, str):
-            alert = json.loads(raw)
-        else:
-            alert = raw
+        alert = json.loads(raw) if isinstance(raw, str) else raw
         embed = _build_alert_embed(alert)
         await _send_webhook(embed)
