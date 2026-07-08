@@ -21,25 +21,17 @@ async def _tg_send(chat_id, text, token):
     )
 
 
-async def _redis_headers(env):
-    token = getattr(env, "REDIS_TOKEN", "") or ""
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
-
-
-async def _redis_get(key, env):
-    redis_url = getattr(env, "REDIS_URL", "") or ""
-    if not redis_url:
+async def _fetch_status(env):
+    base = getattr(env, "HF_SPACE_URL", "") or ""
+    if not base:
         return None
-    headers = await _redis_headers(env)
     resp = await js.fetch(
-        f"{redis_url}/get/{key}",
-        js.JSON.parse(json.dumps({"method": "GET", "headers": headers})),
+        f"{base}/api/v1/bot/status",
+        js.JSON.parse(json.dumps({"method": "GET"})),
     )
     if resp.status != 200:
         return None
-    return json.loads(await resp.text())
+    return await resp.json()
 
 
 async def on_fetch(request, env):
@@ -66,36 +58,34 @@ async def on_fetch(request, env):
     text = msg.get("text", "")
 
     if text == "/dashboard":
-        bot_key = await _redis_get("bot:running", env)
-        pos = await _redis_get("position:current", env)
+        status = await _fetch_status(env)
 
         lines = ["*Trading Dashboard*", ""]
-
-        running = (bot_key or {}).get("result")
+        running = (status or {}).get("running", False)
         lines.append(f"Status: {'Running' if running else 'Stopped'}")
 
         lines.append("")
-        pos_data = (pos or {}).get("result")
-        if pos_data:
-            p = json.loads(pos_data)
-            lines.append("*Position:*")
-            lines.append(f"Coin: {p.get('coin', 'N/A')}")
-            lines.append(f"Direction: {p.get('direction', 'N/A')}")
-            lines.append(f"Size: {p.get('size', 'N/A')}")
-            lines.append(f"Entry: {p.get('entry_price', 'N/A')}")
-            lines.append(f"PnL: {p.get('unrealized_pnl', 'N/A')}")
-            bal_val = p.get("account_value")
-            if bal_val is not None:
-                lines.append("")
-                lines.append(f"*Balance:* {bal_val}")
+        pos = (status or {}).get("position")
+        if pos:
+            direction = (pos.get("direction") or "").upper()
+            size = pos.get("size", 0)
+            coin = pos.get("coin", "")
+            entry = float(pos.get("entry_price", 0))
+            pnl = float(pos.get("unrealized_pnl", 0))
+            lines.append(f"{direction}  {size} {coin}  ${entry:.5f}  ${pnl:.2f}")
         else:
-            lines.append("*Position:* No open position")
-            lines.append("")
-            lines.append("*Balance:* N/A")
+            lines.append("No open position")
 
         await _tg_send(chat_id, "\n".join(lines), token)
 
     return js.Response.new("OK")
+
+
+async def _redis_headers(env):
+    token = getattr(env, "REDIS_TOKEN", "") or ""
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
 
 
 async def _redis_lpop(key, env):
