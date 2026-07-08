@@ -2,18 +2,18 @@ import hashlib
 import json
 import os
 import time
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+
+from workers import Response, fetch
 
 from ed25519 import verify
 
-DISCORD_PUBLIC_KEY = ""
-DISCORD_TOKEN = ""
-DISCORD_WEBHOOK_URL = ""
-APPLICATION_ID = ""
-REDIS_URL = ""
-REDIS_REST = ""
-REDIS_TOKEN = ""
+DISCORD_PUBLIC_KEY: str = ""
+DISCORD_TOKEN: str = ""
+DISCORD_WEBHOOK_URL: str = ""
+APPLICATION_ID: str = ""
+REDIS_URL: str = ""
+REDIS_REST: str = ""
+REDIS_TOKEN: str = ""
 
 
 def _init(env):
@@ -31,19 +31,19 @@ def _init(env):
     REDIS_TOKEN = (user.split(":", 1)[1] if ":" in user else "")
 
 
-def _redis(*args):
+async def _redis(*args):
     body = json.dumps(args).encode()
-    req = Request(
+    resp = await fetch(
         REDIS_REST,
-        data=body,
         method="POST",
+        body=body,
         headers={
             "Authorization": f"Bearer {REDIS_TOKEN}",
             "Content-Type": "application/json",
         },
     )
-    with urlopen(req, timeout=5) as r:
-        return json.loads(r.read())
+    text = await resp.text()
+    return json.loads(text) if text else None
 
 
 def _verify_request(body: bytes, signature: str, timestamp: str) -> bool:
@@ -57,19 +57,19 @@ def _verify_request(body: bytes, signature: str, timestamp: str) -> bool:
         return False
 
 
-def _embed_dashboard() -> dict:
+async def _embed_dashboard() -> dict:
     embed = {"color": 0x3498DB, "title": "🤖 Trading Bot Dashboard", "fields": []}
 
-    running = _redis("GET", "bot:running")
+    running = await _redis("GET", "bot:running")
     status = "🟢 Running" if running == "1" else "🔴 Stopped"
     embed["fields"].append({"name": "Status", "value": status, "inline": True})
 
-    hb = _redis("GET", "config:ai_loop_heartbeat")
+    hb = await _redis("GET", "config:ai_loop_heartbeat")
     if hb and isinstance(hb, str):
         age = time.time() - float(hb)
         embed["fields"].append({"name": "Heartbeat", "value": f"{age:.0f}s ago", "inline": True})
 
-    pos_raw = _redis("GET", "position:current")
+    pos_raw = await _redis("GET", "position:current")
     if pos_raw and isinstance(pos_raw, str):
         pos = json.loads(pos_raw)
         if abs(pos.get("size", 0)) > 1e-9:
@@ -86,7 +86,7 @@ def _embed_dashboard() -> dict:
                 "inline": True,
             })
 
-    sigs_raw = _redis("GET", "multi_asset_signals")
+    sigs_raw = await _redis("GET", "multi_asset_signals")
     if sigs_raw and isinstance(sigs_raw, str):
         sigs = json.loads(sigs_raw)
         non_wait = [c for c, s in sigs.items() if s.get("direction") not in (None, "wait")]
@@ -96,7 +96,7 @@ def _embed_dashboard() -> dict:
             "inline": True,
         })
 
-    remaining = _redis("GET", "config:remaining_seconds") or "?"
+    remaining = (await _redis("GET", "config:remaining_seconds")) or "?"
     embed["footer"] = {"text": f"Next cycle in {remaining}s \u2022 Trading Bot"}
     return embed
 
@@ -145,17 +145,18 @@ def _build_alert_embed(alert: dict) -> dict:
     }
 
 
-def _send_webhook(embed: dict):
+async def _send_webhook(embed: dict):
     if not DISCORD_WEBHOOK_URL:
         return
     body = json.dumps({"embeds": [embed]}).encode()
-    req = Request(
-        DISCORD_WEBHOOK_URL,
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urlopen(req, timeout=5):
+    try:
+        await fetch(
+            DISCORD_WEBHOOK_URL,
+            method="POST",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+    except Exception:
         pass
 
 
@@ -165,7 +166,7 @@ async def on_fetch(request, env):
     url = str(getattr(request, "url", "/"))
 
     if method == "POST" and ("/interaction" in url or url.endswith("/interaction")):
-        raw = request.body if isinstance(request.body, bytes) else (await request.body)
+        raw = await request.bytes() if hasattr(request, "bytes") else (await request.body)
         sig = (request.headers.get("X-Signature-Ed25519") or "").strip()
         ts = (request.headers.get("X-Signature-Timestamp") or "").strip()
 
@@ -181,7 +182,7 @@ async def on_fetch(request, env):
 
             if name == "dashboard":
                 try:
-                    embed = _embed_dashboard()
+                    embed = await _embed_dashboard()
                     return Response(
                         json.dumps({"type": 4, "data": {"embeds": [embed]}}),
                         headers={"Content-Type": "application/json"},
@@ -206,7 +207,7 @@ async def on_cron(event, env):
     _init(env)
     while True:
         try:
-            raw = _redis("LPOP", "queue:discord_alerts")
+            raw = await _redis("LPOP", "queue:discord_alerts")
         except Exception:
             break
         if not raw:
@@ -216,7 +217,4 @@ async def on_cron(event, env):
         else:
             alert = raw
         embed = _build_alert_embed(alert)
-        try:
-            _send_webhook(embed)
-        except Exception:
-            pass
+        await _send_webhook(embed)
