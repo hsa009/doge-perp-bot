@@ -31,7 +31,7 @@ async def _fetch_status(env):
     )
     if resp.status != 200:
         return None
-    return await resp.json()
+    return json.loads(await resp.text())
 
 
 async def on_fetch(request, env):
