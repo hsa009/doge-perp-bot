@@ -75,22 +75,23 @@ async def on_fetch(request, env):
     text = msg.get("text", "")
 
     if text == "/dashboard":
-        bot_key = await _redis_get("bot:running", env)
-        pos = await _redis_get("position:current", env)
+        try:
+            status = await _fetch_api("/api/v1/bot/status", env)
+        except Exception:
+            status = None
 
         lines = ["*Trading Dashboard*", ""]
-        running = (bot_key or {}).get("result")
+        running = (status or {}).get("running", False)
         lines.append(f"Status: {'Running' if running else 'Stopped'}")
 
         lines.append("")
-        pos_data = (pos or {}).get("result")
-        if pos_data:
-            p = json.loads(pos_data)
-            direction = (p.get("direction") or "").upper()
-            size = p.get("size", 0)
-            coin = p.get("coin", "")
-            entry = float(p.get("entry_price", 0))
-            pnl = float(p.get("unrealized_pnl", 0))
+        pos = (status or {}).get("position")
+        if pos:
+            direction = (pos.get("direction") or "").upper()
+            size = pos.get("size", 0)
+            coin = pos.get("coin", "")
+            entry = float(pos.get("entry_price", 0))
+            pnl = float(pos.get("unrealized_pnl", 0))
             lines.append(f"{direction}  {size} {coin}  ${entry:.5f}  ${pnl:.2f}")
         else:
             lines.append("No open position")
@@ -98,7 +99,10 @@ async def on_fetch(request, env):
         await _tg_send(chat_id, "\n".join(lines), token)
 
     elif text == "/signal":
-        data = await _fetch_api("/api/v1/bot/multi-asset-data", env)
+        try:
+            data = await _fetch_api("/api/v1/bot/multi-asset-data", env)
+        except Exception:
+            data = None
 
         lines = ["*AI Signals*", ""]
         signals = (data or {}).get("signals", {})
@@ -118,7 +122,10 @@ async def on_fetch(request, env):
         await _tg_send(chat_id, "\n".join(lines), token)
 
     elif text == "/close":
-        result = await _call_api("/api/v1/bot/close-position", "POST", env)
+        try:
+            result = await _call_api("/api/v1/bot/close-position", "POST", env)
+        except Exception:
+            result = None
         msg = "Position closed" if (result or {}).get("ok") else "Failed to close or no position open"
         await _tg_send(chat_id, msg, token)
 
