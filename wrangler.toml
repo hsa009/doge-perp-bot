@@ -1,7 +1,12 @@
-name = "discord-bot"
+name = "telegram-bot"
 main = "discord-bot-cf/main.py"
 compatibility_date = "2026-07-08"
 compatibility_flags = ["python_workers", "disable_python_external_sdk", "disable_python_no_global_handlers"]
+
+[vars]
+TELEGRAM_BOT_TOKEN = ""
+ALLOWED_TELEGRAM_ID = ""
+REDIS_URL = ""
 
 [triggers]
 crons = ["*/1 * * * *"]
