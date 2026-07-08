@@ -628,6 +628,10 @@ def safe_to_trade(coin: str, direction: str) -> bool:
             logger.warning(f"SAFE_TO_TRADE: ABORT — {coin} is disabled")
             return False
 
+        if redis.get_cooldown(coin):
+            logger.warning(f"SAFE_TO_TRADE: ABORT — {coin} cooldown active")
+            return False
+
         existing = hl.get_position(coin)
         szi = float(existing.get("szi", 0)) if existing else 0.0
         if abs(szi) > 1e-9:
@@ -733,6 +737,7 @@ def open_trade(signal: dict, coin: str = "DOGE") -> bool:
         except Exception:
             pass
         logger.info(f"Trade opened successfully")
+        redis.clear_current_signal()
         redis.client.lpush("queue:discord_alerts", json.dumps({"event_type": "position_opened", "coin": coin, "side": signal["direction"], "price": entry_price}))
         return True
     except Exception as e:
@@ -932,21 +937,13 @@ def trading_loop():
 
                 continue
             elif pos is None:
-                cached = redis.get_position()
-                if cached and abs(cached.get("size", 0)) > 0:
-                    logger.info("Position gone from exchange — closing trade in DB")
-                    _clear_position_config(coin)
-                    close_position_in_db(coin)
-                    _apply_pending_asset()
-                    redis.clear_current_signal()
+                _clear_position_config(coin)
+                close_position_in_db(coin)
+                _apply_pending_asset()
                 time.sleep(15)
             elif float(pos["szi"]) == 0:
-                cached = redis.get_position()
-                if cached and cached.get("size", 0) != 0:
-                    logger.info("Position closed (sz=0)")
-                    close_position_in_db(coin)
-                    _apply_pending_asset()
-                    redis.clear_current_signal()
+                close_position_in_db(coin)
+                _apply_pending_asset()
 
             signal = _sniper_redis_cached("current_signal", redis.get_current_signal)
             if not signal:
