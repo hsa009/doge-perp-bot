@@ -226,7 +226,7 @@ async def on_fetch(request, env):
     return js.Response.new("OK", js.JSON.parse(json.dumps({"status": 200})))
 
 
-async def on_cron(event, env):
+async def on_scheduled(controller, env, ctx):
     _init(env)
     while True:
         try:
