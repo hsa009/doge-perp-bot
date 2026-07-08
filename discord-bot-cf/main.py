@@ -34,6 +34,23 @@ async def _fetch_api(path, env):
     return json.loads(await resp.text())
 
 
+async def _call_api(path, method, env, body=None):
+    base = getattr(env, "HF_SPACE_URL", "") or ""
+    if not base:
+        return None
+    opts = {"method": method}
+    if body:
+        opts["headers"] = {"Content-Type": "application/json"}
+        opts["body"] = json.dumps(body)
+    resp = await js.fetch(
+        f"{base}{path}",
+        js.JSON.parse(json.dumps(opts)),
+    )
+    if resp.status >= 400:
+        return None
+    return json.loads(await resp.text())
+
+
 async def on_fetch(request, env):
     if str(request.method).upper() != "POST":
         return js.Response.new("OK")
@@ -97,6 +114,11 @@ async def on_fetch(request, env):
         lines.append(f"Winner: {winner or '—'}")
 
         await _tg_send(chat_id, "\n".join(lines), token)
+
+    elif text == "/close":
+        result = await _call_api("/api/v1/bot/close-position", "POST", env)
+        msg = "Position closed" if (result or {}).get("ok") else "Failed to close or no position open"
+        await _tg_send(chat_id, msg, token)
 
     return js.Response.new("OK")
 
