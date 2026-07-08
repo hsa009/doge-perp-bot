@@ -145,6 +145,22 @@ async def _redis_lpop(key, env):
     return json.loads(await resp.text())
 
 
+async def _alert_text(alert):
+    event = alert.get("event_type", "")
+    coin = alert.get("coin", "?")
+    side = (alert.get("side") or "").upper()
+    price = alert.get("price", 0)
+    pnl = alert.get("pnl")
+
+    if event == "position_opened":
+        return f"*POSITION OPENED*\n{side} {coin} @ ${float(price):.5f}"
+    elif event == "tp_hit":
+        return f"*TAKE PROFIT HIT*\n{side} {coin} @ ${float(price):.5f}  PnL: ${float(pnl):.2f}"
+    elif event == "sl_hit":
+        return f"*STOP LOSS HIT*\n{side} {coin} @ ${float(price):.5f}  PnL: ${float(pnl):.2f}"
+    return json.dumps(alert)
+
+
 async def on_scheduled(controller, env, ctx):
     token = getattr(env, "TELEGRAM_BOT_TOKEN", "") or ""
     chat_id_str = getattr(env, "ALLOWED_TELEGRAM_ID", "") or ""
@@ -158,7 +174,7 @@ async def on_scheduled(controller, env, ctx):
             if not data or not data.get("result"):
                 break
             alert = json.loads(data["result"])
-            msg = alert.get("message", json.dumps(alert))
-            await _tg_send(chat_id, f"Alert: {msg}", token)
+            text = await _alert_text(alert)
+            await _tg_send(chat_id, text, token)
         except Exception:
             break
