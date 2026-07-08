@@ -77,21 +77,19 @@ async def on_fetch(request, env):
 
         if text == "/dashboard":
             try:
-                bot_key = await _redis_get("bot:running", env)
-                pos = await _redis_get("position:current", env)
+                status = await _fetch_api("/api/v1/bot/status", env)
+                pos = (status or {}).get("position")
 
                 lines = ["*Trading Dashboard*", ""]
-                running = (bot_key or {}).get("result")
+                running = (status or {}).get("running", False)
                 lines.append(f"Status: {'Running' if running else 'Stopped'}")
 
                 lines.append("")
-                pos_data = (pos or {}).get("result")
-                if pos_data:
-                    p = json.loads(pos_data)
-                    lines.append((p.get("direction") or "").upper())
-                    lines.append(f"{p.get('size', 0)} {p.get('coin', '')}")
-                    lines.append(f"${float(p.get('entry_price', 0)):.5f}")
-                    lines.append(f"${float(p.get('unrealized_pnl', 0)):.2f}")
+                if pos and float(pos.get("size", 0)) > 0 and float(pos.get("entry_price", 0)) > 0:
+                    lines.append((pos.get("direction") or "").upper())
+                    lines.append(f"{abs(float(pos.get('size', 0)))} {pos.get('coin', '')}")
+                    lines.append(f"${float(pos.get('entry_price', 0)):.5f}")
+                    lines.append(f"${float(pos.get('unrealized_pnl', 0)):.2f}")
                 else:
                     lines.append("No open position")
 
@@ -137,42 +135,6 @@ async def on_fetch(request, env):
         return js.Response.new("OK")
 
 
-async def _redis_headers(env):
-    token = getattr(env, "REDIS_TOKEN", "") or ""
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
-
-
-async def _redis_get(key, env):
-    redis_url = getattr(env, "REDIS_URL", "") or ""
-    if not redis_url:
-        return None
-    headers = await _redis_headers(env)
-    resp = await js.fetch(
-        f"{redis_url}/get/{key}",
-        js.JSON.parse(json.dumps({"method": "GET", "headers": headers})),
-    )
-    if resp.status != 200:
-        return None
-    return json.loads(await resp.text())
-
-
-async def _redis_lpop(key, env):
-    redis_url = getattr(env, "REDIS_URL", "") or ""
-    if not redis_url:
-        return None
-    headers = await _redis_headers(env)
-    headers["Content-Type"] = "application/json"
-    resp = await js.fetch(
-        f"{redis_url}/lpop/{key}",
-        js.JSON.parse(json.dumps({"method": "POST", "headers": headers})),
-    )
-    if resp.status != 200:
-        return None
-    return json.loads(await resp.text())
-
-
 async def _alert_text(alert):
     event = alert.get("event_type", "")
     coin = alert.get("coin", "?")
@@ -198,11 +160,11 @@ async def on_scheduled(controller, env, ctx):
 
     while True:
         try:
-            data = await _redis_lpop("queue:discord_alerts", env)
-            if not data or not data.get("result"):
+            alerts = await _fetch_api("/api/v1/bot/alerts", env)
+            if not alerts or not isinstance(alerts, list):
                 break
-            alert = json.loads(data["result"])
-            text = await _alert_text(alert)
-            await _tg_send(chat_id, text, token)
+            for alert in alerts:
+                text = await _alert_text(alert)
+                await _tg_send(chat_id, text, token)
         except Exception:
             break
