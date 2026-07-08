@@ -39,27 +39,23 @@ MAX_SIGNAL_AGE_S = 4.0
 
 VOTER_DEADLINE_S = 180
 
-# Gemini rate limiter: 8 calls/minute (sliding window, free tier limit ~10)
-_GEMINI_RATE_LIMIT = 8
-_GEMINI_WINDOW_S = 60
-_gemini_call_times: list[float] = []
+# Gemini rate limiter: 2s between calls
+_GEMINI_LAST_CALL = 0.0
 _gemini_rate_lock = threading.Lock()
 
 
 def _gemini_rate_acquire() -> float:
-    """Wait until within rate limit. Returns wait time in seconds."""
+    global _GEMINI_LAST_CALL
     with _gemini_rate_lock:
         now = time.time()
-        cutoff = now - _GEMINI_WINDOW_S
-        _gemini_call_times[:] = [t for t in _gemini_call_times if t > cutoff]
-        if len(_gemini_call_times) < _GEMINI_RATE_LIMIT:
-            _gemini_call_times.append(now)
-            return 0.0
-        earliest = min(_gemini_call_times)
-        wait = earliest + _GEMINI_WINDOW_S - now + 1.0
-        _gemini_call_times.pop(0)
-        _gemini_call_times.append(now + wait)
-        return wait
+        elapsed = now - _GEMINI_LAST_CALL
+        if elapsed < 2.0:
+            wait = 2.0 - elapsed
+            time.sleep(wait)
+            _GEMINI_LAST_CALL = now + wait
+            return wait
+        _GEMINI_LAST_CALL = now
+        return 0.0
 
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
 
@@ -314,6 +310,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         ],
     }
     try:
+        _gemini_rate_acquire()
         with httpx.Client(timeout=60) as client:
             resp = client.post(url, json=payload)
             if resp.status_code != 200:
