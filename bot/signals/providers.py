@@ -605,7 +605,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
 
     # Primary provider (Gemini → Gemini backup → OpenRouter backup)
     if provider_api_keys:
-        voter_tasks.append(("primary", call_provider_with_retry, (prompt, 5, provider_api_keys)))
+        voter_tasks.append(("gemini", call_provider_with_retry, (prompt, 5, provider_api_keys)))
 
     # # Secondary voter (with throttle, staleness check) — DISABLED
     # def _call_secondary() -> dict | None:

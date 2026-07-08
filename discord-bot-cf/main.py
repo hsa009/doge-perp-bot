@@ -77,26 +77,21 @@ async def on_fetch(request, env):
     if text == "/dashboard":
         try:
             status = await _fetch_api("/api/v1/bot/status", env)
+            lines = ["*Trading Dashboard*", ""]
+            running = (status or {}).get("running", False)
+            lines.append(f"Status: {'Running' if running else 'Stopped'}")
+            lines.append("")
+            pos = (status or {}).get("position")
+            if pos:
+                lines.append((pos.get("direction") or "").upper())
+                lines.append(f"{pos.get('size', 0)} {pos.get('coin', '')}")
+                lines.append(f"${float(pos.get('entry_price', 0)):.5f}")
+                lines.append(f"${float(pos.get('unrealized_pnl', 0)):.2f}")
+            else:
+                lines.append("No open position")
+            await _tg_send(chat_id, "\n".join(lines), token)
         except Exception:
-            status = None
-
-        lines = ["*Trading Dashboard*", ""]
-        running = (status or {}).get("running", False)
-        lines.append(f"Status: {'Running' if running else 'Stopped'}")
-
-        lines.append("")
-        pos = (status or {}).get("position")
-        if pos:
-            direction = (pos.get("direction") or "").upper()
-            size = pos.get("size", 0)
-            coin = pos.get("coin", "")
-            entry = float(pos.get("entry_price", 0))
-            pnl = float(pos.get("unrealized_pnl", 0))
-            lines.append(f"{direction}  {size} {coin}  ${entry:.5f}  ${pnl:.2f}")
-        else:
-            lines.append("No open position")
-
-        await _tg_send(chat_id, "\n".join(lines), token)
+            pass
 
     elif text == "/signal":
         try:
