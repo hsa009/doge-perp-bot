@@ -1397,6 +1397,19 @@ def debug_live_data():
         "latest_closes": {coin: round(closes[-1], 5) if closes else None for coin, closes in hist.items()},
     })
 
+@app.route("/api/v1/bot/alerts")
+def get_alerts():
+    alerts = []
+    try:
+        while True:
+            raw = redis.client.lpop("queue:discord_alerts")
+            if not raw:
+                break
+            alerts.append(json.loads(raw))
+    except Exception:
+        pass
+    return jsonify(alerts)
+
 @app.route("/api/v1/bot/debug-signal")
 def debug_signal():
     coin = request.args.get("coin", "")

@@ -9,9 +9,9 @@ logger = logging.getLogger(__name__)
 
 class RedisClient:
     def __init__(self):
-        redis_url = os.getenv("REDIS_URL")
+        redis_url = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL", "")
         if not redis_url:
-            raise ValueError("CRITICAL: REDIS_URL secret is missing from Hugging Face Space settings!")
+            raise ValueError("CRITICAL: REDIS_URL or UPSTASH_REDIS_URL secret is missing!")
         self.client = redis.Redis.from_url(
             redis_url,
             ssl_cert_reqs="none",
