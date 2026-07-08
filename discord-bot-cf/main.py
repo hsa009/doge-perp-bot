@@ -52,79 +52,89 @@ async def _call_api(path, method, env, body=None):
 
 
 async def on_fetch(request, env):
-    if str(request.method).upper() != "POST":
-        return js.Response.new("OK")
+    try:
+        if str(request.method).upper() != "POST":
+            return js.Response.new("OK")
 
-    token = getattr(env, "TELEGRAM_BOT_TOKEN", "") or ""
-    allowed = getattr(env, "ALLOWED_TELEGRAM_ID", "") or ""
-    if not token or not allowed:
-        return js.Response.new("OK")
+        token = getattr(env, "TELEGRAM_BOT_TOKEN", "") or ""
+        allowed = getattr(env, "ALLOWED_TELEGRAM_ID", "") or ""
+        if not token or not allowed:
+            return js.Response.new("OK")
 
-    raw = await request.text()
-    if not raw:
-        return js.Response.new("OK")
+        raw = await request.text()
+        if not raw:
+            return js.Response.new("OK")
 
-    update = json.loads(raw)
-    msg = update.get("message", {})
-    user_id = str(msg.get("from", {}).get("id", ""))
-    chat_id = msg.get("chat", {}).get("id")
+        update = json.loads(raw)
+        msg = update.get("message", {})
+        user_id = str(msg.get("from", {}).get("id", ""))
+        chat_id = msg.get("chat", {}).get("id")
 
-    if user_id != allowed or not chat_id:
-        return js.Response.new("OK")
+        if user_id != allowed or not chat_id:
+            return js.Response.new("OK")
 
-    text = msg.get("text", "")
+        text = msg.get("text", "")
 
-    if text == "/dashboard":
-        try:
-            status = await _fetch_api("/api/v1/bot/status", env)
-            lines = ["*Trading Dashboard*", ""]
-            running = (status or {}).get("running", False)
-            lines.append(f"Status: {'Running' if running else 'Stopped'}")
+        if text == "/dashboard":
+            try:
+                bot_key = await _redis_get("bot:running", env)
+                pos = await _redis_get("position:current", env)
+
+                lines = ["*Trading Dashboard*", ""]
+                running = (bot_key or {}).get("result")
+                lines.append(f"Status: {'Running' if running else 'Stopped'}")
+
+                lines.append("")
+                pos_data = (pos or {}).get("result")
+                if pos_data:
+                    p = json.loads(pos_data)
+                    lines.append((p.get("direction") or "").upper())
+                    lines.append(f"{p.get('size', 0)} {p.get('coin', '')}")
+                    lines.append(f"${float(p.get('entry_price', 0)):.5f}")
+                    lines.append(f"${float(p.get('unrealized_pnl', 0)):.2f}")
+                else:
+                    lines.append("No open position")
+
+                await _tg_send(chat_id, "\n".join(lines), token)
+            except Exception as e:
+                js.console.log(f"[dashboard] error: {e}")
+
+        elif text == "/signal":
+            try:
+                data = await _fetch_api("/api/v1/bot/multi-asset-data", env)
+            except Exception as e:
+                js.console.log(f"[signal] error: {e}")
+                data = None
+
+            lines = ["*AI Signals*", ""]
+            signals = (data or {}).get("signals", {})
+            for coin in sorted(signals.keys()):
+                s = signals[coin]
+                d = s.get("direction", "?")
+                c = s.get("confidence", 0)
+                if s.get("disabled", False):
+                    lines.append(f"{coin} — DISABLED")
+                else:
+                    lines.append(f"{coin}: {d.upper()} ({c:.2f})")
+
             lines.append("")
-            pos = (status or {}).get("position")
-            if pos:
-                lines.append((pos.get("direction") or "").upper())
-                lines.append(f"{pos.get('size', 0)} {pos.get('coin', '')}")
-                lines.append(f"${float(pos.get('entry_price', 0)):.5f}")
-                lines.append(f"${float(pos.get('unrealized_pnl', 0)):.2f}")
-            else:
-                lines.append("No open position")
+            winner = (data or {}).get("winner", "") or ""
+            lines.append(f"Winner: {winner or '—'}")
+
             await _tg_send(chat_id, "\n".join(lines), token)
-        except Exception:
-            pass
 
-    elif text == "/signal":
-        try:
-            data = await _fetch_api("/api/v1/bot/multi-asset-data", env)
-        except Exception:
-            data = None
+        elif text == "/close":
+            try:
+                result = await _call_api("/api/v1/bot/close-position", "POST", env)
+            except Exception:
+                result = None
+            msg = "Position closed" if (result or {}).get("ok") else "Failed to close or no position open"
+            await _tg_send(chat_id, msg, token)
 
-        lines = ["*AI Signals*", ""]
-        signals = (data or {}).get("signals", {})
-        for coin in sorted(signals.keys()):
-            s = signals[coin]
-            d = s.get("direction", "?")
-            c = s.get("confidence", 0)
-            if s.get("disabled", False):
-                lines.append(f"{coin} — DISABLED")
-            else:
-                lines.append(f"{coin}: {d.upper()} ({c:.2f})")
-
-        lines.append("")
-        winner = (data or {}).get("winner", "") or ""
-        lines.append(f"Winner: {winner or '—'}")
-
-        await _tg_send(chat_id, "\n".join(lines), token)
-
-    elif text == "/close":
-        try:
-            result = await _call_api("/api/v1/bot/close-position", "POST", env)
-        except Exception:
-            result = None
-        msg = "Position closed" if (result or {}).get("ok") else "Failed to close or no position open"
-        await _tg_send(chat_id, msg, token)
-
-    return js.Response.new("OK")
+        return js.Response.new("OK")
+    except Exception as e:
+        js.console.log(f"[on_fetch] unhandled: {e}")
+        return js.Response.new("OK")
 
 
 async def _redis_headers(env):
