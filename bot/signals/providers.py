@@ -331,7 +331,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
     }
     try:
         _gemini_rate_acquire()
-        with httpx.Client(timeout=60) as client:
+        with httpx.Client(timeout=20) as client:
             resp = client.post(url, json=payload)
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
@@ -428,7 +428,7 @@ def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
                 last = call_gemini_http(key, label, prompt)
             else:
                 _openrouter_rate_acquire()
-                last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label, timeout=60)
+                last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label, timeout=20)
             if last and "_error" not in last:
                 return last
             if last and "HTTP_429" in str(last.get("_error", "")):
