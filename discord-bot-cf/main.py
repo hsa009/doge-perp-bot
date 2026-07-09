@@ -232,7 +232,7 @@ async def on_scheduled(controller, env, ctx):
 
     while True:
         try:
-            alerts = await _fetch_api("/api/v1/bot/alerts", env)
+            alerts = await _fetch_api("/api/v1/bot/alerts", env, timeout_ms=10000)
             if not alerts or not isinstance(alerts, list):
                 break
             for alert in alerts:
