@@ -92,7 +92,7 @@ _GEMINI_KEY_INDEX = 0
 _GEMINI_RING_LOCK = threading.Lock()
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 _groq_last_call = 0.0
 _groq_rate_lock = threading.Lock()
