@@ -150,31 +150,22 @@ async def on_fetch(request, env):
             await _tg_send(chat_id, "pong", token)
 
         elif text == "/debug":
-            await _tg_send(chat_id, "Debug: starting...", token)
             try:
-                data = await _fetch_api("/api/v1/debug-keys", env)
+                data = await _fetch_api("/api/v1/coin-key-map", env)
             except Exception as e:
                 await _tg_send(chat_id, f"Debug error: {e}", token)
                 data = None
             if not data:
-                await _tg_send(chat_id, "Debug: no data from /api/v1/debug-keys (HF Space may be unreachable)", token)
+                await _tg_send(chat_id, "Debug: no data", token)
             else:
-                total = data.get("total", 0)
-                working = data.get("working", 0)
-                msg = f"Debug: {working}/{total} keys working"
-                results = data.get("results", {})
-                for coin in sorted(results.keys()):
-                    for entry in results[coin]:
-                        status = "OK" if entry.get("ok") else "FAIL"
-                        err = entry.get("error") or entry.get("exc") or ""
-                        label = entry.get("label", "")
-                        http = entry.get("http", "")
-                        key_preview = entry.get("key_preview", "")
-                        if entry.get("ok"):
-                            msg += f"\n{coin}: {label} ({key_preview}) OK"
-                        else:
-                            err_snippet = (err[:60] if err else f"HTTP_{http}")
-                            msg += f"\n{coin}: {label} ({key_preview}) FAIL {err_snippet}"
+                mapping = data.get("mapping", {})
+                msg = "Keys per coin:"
+                for coin in sorted(mapping.keys()):
+                    info = mapping[coin]
+                    count = info.get("count", 0)
+                    keys = ", ".join(info.get("keys", []))
+                    msg += f"\n{coin}: {count} key(s) {keys}"
+                msg += f"\n\nTotal coins: {data.get('total_coins', 0)}"
                 await _tg_send(chat_id, msg, token)
 
         return js.Response.new("OK")
