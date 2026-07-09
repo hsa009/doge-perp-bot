@@ -38,9 +38,9 @@ def get_coin_api_keys(coin: str) -> list[tuple[str, str]]:
     g2 = os.environ.get(f"{coin}_GEMINI_BACKUP", "")
     if g2:
         keys.append(("gemini", g2))
-    o3 = os.environ.get(f"{coin}_OPENROUTER_BACKUP", "")
-    if o3:
-        keys.append(("openrouter", o3))
+    g3 = os.environ.get(f"{coin}_GROQ_KEY", "")
+    if g3:
+        keys.append(("groq", g3))
     return keys
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
