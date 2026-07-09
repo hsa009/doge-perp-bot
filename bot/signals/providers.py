@@ -278,7 +278,7 @@ Respond ONLY with valid JSON. Keep reasoning under 50 words:
 {{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "[Include calculated TP% vs ATR% here] ..."}}"""
 
 
-def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key_label: str = "secondary", timeout: int = 30) -> dict | None:
+def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key_label: str = "secondary") -> dict | None:
     if not api_key:
         logger.warning(f"{key_label}: no API key configured")
         return None
@@ -294,7 +294,7 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
         "Content-Type": "application/json",
     }
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client() as client:
             resp = client.post(base_url, json=payload, headers=headers)
             if resp.status_code == 429:
                 logger.warning(f"{key_label}: 429 rate limited")
@@ -331,7 +331,7 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
     }
     try:
         _gemini_rate_acquire()
-        with httpx.Client(timeout=20) as client:
+        with httpx.Client() as client:
             resp = client.post(url, json=payload)
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
@@ -427,7 +427,7 @@ def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
             last = call_gemini_http(key, label, prompt)
         else:
             _openrouter_rate_acquire()
-            last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label, timeout=20)
+            last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label)
         if last and "_error" not in last:
             return last
         time.sleep(5)
