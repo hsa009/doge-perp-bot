@@ -150,6 +150,7 @@ async def on_fetch(request, env):
             await _tg_send(chat_id, "pong", token)
 
         elif text == "/debug":
+            await _tg_send(chat_id, "Debug: starting...", token)
             try:
                 data = await _fetch_api("/api/v1/debug-keys", env)
             except Exception as e:
