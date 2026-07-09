@@ -243,9 +243,12 @@ def _clear_position_config(coin: str):
 def close_position():
     logger.info("Close position requested via API")
     try:
-        coin = get_runtime_config().get("active_asset", "DOGE")
-        pos = hl.get_position(coin)
-        if pos and abs(float(pos["szi"])) >= 0.01:
+        target_coin = get_runtime_config().get("active_asset", "DOGE")
+        all_positions = hl.get_all_positions()
+        if all_positions:
+            coin = list(all_positions.keys())[0]
+            pos = all_positions[coin]
+            logger.info(f"Closing position: {coin} sz={pos['szi']}")
             open_orders = hl.get_open_orders()
             for i, o in enumerate(open_orders):
                 try:
@@ -257,11 +260,11 @@ def close_position():
             time.sleep(0.5)
             executor.close_position(coin=coin)
             logger.info(f"Position closed via API ({coin})")
+            _clear_position_config(coin)
+            close_position_in_db(coin)
         else:
-            logger.info(f"No meaningful position to close for {coin} (sz={float(pos['szi']) if pos else 0})")
-        _clear_position_config(coin)
+            logger.info("No position to close")
         redis.clear_position()
-        close_position_in_db()
         _apply_pending_asset()
         redis.clear_current_signal()
         return jsonify({"ok": True})
