@@ -89,13 +89,10 @@ def _groq_rate_acquire() -> float:
         elapsed = now - _groq_last_call
         if elapsed < 30.0:
             wait = 30.0 - elapsed
-            logger.info(f"groq_rate_acquire: waiting {wait:.1f}s (elapsed={elapsed:.1f}s)")
             time.sleep(wait)
             _groq_last_call = now + wait
-            logger.info(f"groq_rate_acquire: done waiting, POST at T+{_groq_last_call:.0f}s")
             return wait
         _groq_last_call = now
-        logger.info(f"groq_rate_acquire: no wait (elapsed={elapsed:.1f}s)")
         return 0.0
 
 
@@ -375,7 +372,6 @@ def call_gemini_http(api_key: str, key_label: str, prompt: str) -> dict | None:
         ],
     }
     try:
-        _gemini_rate_acquire()
         with httpx.Client() as client:
             resp = client.post(url, json=payload)
             if resp.status_code != 200:
