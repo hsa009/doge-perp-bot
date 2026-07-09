@@ -1580,7 +1580,7 @@ def debug_keys():
             else:
                 url = "https://openrouter.ai/api/v1/chat/completions"
                 payload = {
-                    "model": "qwen/qwen3-next-80b-a3b-instruct:free",
+                    "model": "google/gemma-4-31b-it:free",
                     "messages": [{"role": "user", "content": "hi"}],
                 }
                 headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
