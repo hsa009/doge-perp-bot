@@ -1611,14 +1611,13 @@ def ai_loop():
     first = True
     while True:
         try:
-            redis.set_config("ai_loop_heartbeat", str(time.time()))
-
             if not first:
                 remaining = 900 - (time.time() % 900)
-                if remaining > 5:
+                if remaining > 1:
                     time.sleep(remaining)
             first = False
 
+            redis.set_config("ai_loop_heartbeat", str(time.time()))
             signals = run_multi_asset_signal()
             aggregate_signals(signals)
 
