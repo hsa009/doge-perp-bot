@@ -342,7 +342,7 @@ def call_groq(api_key: str, prompt: str, key_label: str = "groq") -> dict | None
                 remaining = resp.headers.get("x-ratelimit-remaining-tokens", "?")
                 reset = resp.headers.get("x-ratelimit-reset-tokens", "?")
                 logger.warning(f"{key_label}: 429 rate limited (remaining={remaining} reset={reset}): {resp.text[:200]}")
-                return {"_error": f"rate_limited_429: {resp.text[:100]}"}
+                return {"_error": f"rate_limited_429 (remaining={remaining},reset={reset}): {resp.text[:200]}"}
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
                 return {"_error": f"HTTP_{resp.status_code}: {resp.text[:100]}"}
