@@ -87,8 +87,8 @@ def _groq_rate_acquire() -> float:
     with _groq_rate_lock:
         now = time.time()
         elapsed = now - _groq_last_call
-        if elapsed < 30.0:
-            wait = 30.0 - elapsed
+        if elapsed < 15.0:
+            wait = 15.0 - elapsed
             time.sleep(wait)
             _groq_last_call = now + wait
             return wait
@@ -339,7 +339,9 @@ def call_groq(api_key: str, prompt: str, key_label: str = "groq") -> dict | None
         with httpx.Client(timeout=30) as client:
             resp = client.post(GROQ_BASE_URL, json=payload, headers=headers)
             if resp.status_code == 429:
-                logger.warning(f"{key_label}: 429 rate limited: {resp.text[:200]}")
+                remaining = resp.headers.get("x-ratelimit-remaining-tokens", "?")
+                reset = resp.headers.get("x-ratelimit-reset-tokens", "?")
+                logger.warning(f"{key_label}: 429 rate limited (remaining={remaining} reset={reset}): {resp.text[:200]}")
                 return {"_error": f"rate_limited_429: {resp.text[:100]}"}
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
