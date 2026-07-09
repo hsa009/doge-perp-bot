@@ -39,23 +39,7 @@ MAX_SIGNAL_AGE_S = 4.0
 
 VOTER_DEADLINE_S = 180
 
-# Gemini rate limiter: 2s between calls
-_GEMINI_LAST_CALL = 0.0
-_gemini_rate_lock = threading.Lock()
 
-
-def _gemini_rate_acquire() -> float:
-    global _GEMINI_LAST_CALL
-    with _gemini_rate_lock:
-        now = time.time()
-        elapsed = now - _GEMINI_LAST_CALL
-        if elapsed < 2.0:
-            wait = 2.0 - elapsed
-            time.sleep(wait)
-            _GEMINI_LAST_CALL = now + wait
-            return wait
-        _GEMINI_LAST_CALL = now
-        return 0.0
 
 ALL_MODEL_IDS = [m.strip() for m in AI_MODELS.split(",") if m.strip()]
 
@@ -481,7 +465,6 @@ def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
     for idx, (ptype, key) in enumerate(coin_keys or []):
         label = f"{ptype}_{'primary' if idx == 0 else 'backup'}#{idx}"
         if ptype == "gemini":
-            _gemini_rate_acquire()
             last = call_gemini_http(key, label, prompt)
         elif ptype == "groq":
             last = call_groq(key, prompt, label)
