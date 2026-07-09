@@ -1533,11 +1533,6 @@ def test_gemini():
         "results": results,
     })
 
-@app.route("/api/v1/bot/test-alert")
-def test_alert():
-    redis.client.lpush("queue:discord_alerts", json.dumps({"event_type": "position_opened", "coin": "POPCAT", "side": "long", "price": 0.04552, "size": 145, "leverage": 10, "confidence": 0.8}))
-    return jsonify({"ok": True, "msg": "test position_opened alert pushed"})
-
 @app.route("/api/v1/coin-key-map")
 def coin_key_map():
     from bot.config import get_coin_api_keys, COIN_LIST
