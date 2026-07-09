@@ -1,6 +1,8 @@
 import json
 import js
 
+WORKER_URL = "https://telegram-bot.o8673587.workers.dev"
+
 
 async def _tg_send(chat_id, text, token):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -53,27 +55,42 @@ async def _call_api(path, method, env, body=None):
 
 async def on_fetch(request, env):
     try:
-        if str(request.method).upper() != "POST":
+        method = str(request.method).upper()
+        token = getattr(env, "TELEGRAM_BOT_TOKEN", "") or ""
+
+        if method == "GET":
+            url_str = str(request.url) if hasattr(request, "url") else ""
+            if "reset-webhook" in url_str and token:
+                await js.fetch(
+                    f"https://api.telegram.org/bot{token}/deleteWebhook",
+                    js.JSON.parse(json.dumps({"method": "POST"})),
+                )
+                await js.fetch(
+                    f"https://api.telegram.org/bot{token}/setWebhook?url=https://telegram-bot.o8673587.workers.dev/",
+                    js.JSON.parse(json.dumps({"method": "POST"})),
+                )
+                return js.Response.new("Webhook reset")
             return js.Response.new("OK")
 
-        token = getattr(env, "TELEGRAM_BOT_TOKEN", "") or ""
         allowed = getattr(env, "ALLOWED_TELEGRAM_ID", "") or ""
+
+        raw = await request.text()
+
+        # Check webhook by simply returning OK for Telegram's POST
+        try:
+            update = json.loads(raw) if raw else {}
+            msg = update.get("message", {})
+            user_id = str(msg.get("from", {}).get("id", ""))
+            chat_id = msg.get("chat", {}).get("id")
+            text = msg.get("text", "")
+        except (ValueError, TypeError, AttributeError):
+            return js.Response.new("OK")
+
         if not token or not allowed:
             return js.Response.new("OK")
 
-        raw = await request.text()
-        if not raw:
-            return js.Response.new("OK")
-
-        update = json.loads(raw)
-        msg = update.get("message", {})
-        user_id = str(msg.get("from", {}).get("id", ""))
-        chat_id = msg.get("chat", {}).get("id")
-
         if user_id != allowed or not chat_id:
             return js.Response.new("OK")
-
-        text = msg.get("text", "")
 
         if text == "/dashboard":
             try:
