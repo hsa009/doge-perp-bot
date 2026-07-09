@@ -942,11 +942,11 @@ def trading_loop():
                 continue
             elif pos is None:
                 _clear_position_config(coin)
-                close_position_in_db(coin)
+                redis.clear_position()
                 _apply_pending_asset()
                 time.sleep(15)
             elif float(pos["szi"]) == 0:
-                close_position_in_db(coin)
+                redis.clear_position()
                 _apply_pending_asset()
 
             signal = _sniper_redis_cached("current_signal", redis.get_current_signal)
