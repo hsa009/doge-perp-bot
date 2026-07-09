@@ -1560,7 +1560,7 @@ def debug_keys():
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
                 payload = {"contents": [{"parts": [{"text": "hi"}]}]}
                 try:
-                    resp = httpx.post(url, json=payload, timeout=15)
+                    resp = httpx.post(url, json=payload, timeout=5)
                     entry["http"] = resp.status_code
                     if resp.status_code == 200:
                         body = resp.json()
@@ -1582,7 +1582,7 @@ def debug_keys():
                 }
                 headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
                 try:
-                    resp = httpx.post(url, json=payload, headers=headers, timeout=15)
+                    resp = httpx.post(url, json=payload, headers=headers, timeout=5)
                     entry["http"] = resp.status_code
                     if resp.status_code == 200:
                         body = resp.json()
@@ -1595,7 +1595,6 @@ def debug_keys():
                     entry["exc"] = str(e)[:120]
 
             coin_results.append(entry)
-            time.sleep(1)
         results[coin] = coin_results
 
     total = sum(len(v) for v in results.values())
