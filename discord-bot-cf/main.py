@@ -155,7 +155,9 @@ async def on_fetch(request, env):
             except Exception as e:
                 await _tg_send(chat_id, f"Debug error: {e}", token)
                 data = None
-            if data:
+            if not data:
+                await _tg_send(chat_id, "Debug: no data from /api/v1/debug-keys (HF Space may be unreachable)", token)
+            else:
                 total = data.get("total", 0)
                 working = data.get("working", 0)
                 msg = f"Debug: {working}/{total} keys working"
