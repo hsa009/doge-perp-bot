@@ -91,6 +91,27 @@ _GEMINI_KEY_RING: list[str] = _build_gemini_key_ring()
 _GEMINI_KEY_INDEX = 0
 _GEMINI_RING_LOCK = threading.Lock()
 
+GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "openai/gpt-oss-120b"
+
+_groq_last_call = 0.0
+_groq_rate_lock = threading.Lock()
+
+
+def _groq_rate_acquire() -> float:
+    global _groq_last_call
+    with _groq_rate_lock:
+        now = time.time()
+        elapsed = now - _groq_last_call
+        if elapsed < 2.0:
+            wait = 2.0 - elapsed
+            time.sleep(wait)
+            _groq_last_call = now + wait
+            return wait
+        _groq_last_call = now
+        return 0.0
+
+
 OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
 
@@ -184,8 +205,8 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
 
     close_price = i["close"]
     atr_val = i["atr"]
-    tp_pct_dist = (tp_usd / close_price) * 100
-    sl_pct_dist = (sl_usd / close_price) * 100
+    tp_pct_dist = (tp_usd / notional) * (100 / leverage)
+    sl_pct_dist = (sl_usd / notional) * (100 / leverage)
     atr_vel_pct = (atr_val / close_price) * 100
 
     history_block = ""
@@ -262,12 +283,12 @@ Stop Loss: ${sl_usd} ({sl_pct:.2f}% of notional)
 {history_block}
 
 === REQUIRED PRE-TRADE MATHEMATICAL ASSESSMENT ===
-1. TP % Distance = ({tp_usd} / {close_price}) * 100 = {tp_pct_dist:.4f}%
-2. SL % Distance = ({sl_usd} / {close_price}) * 100 = {sl_pct_dist:.4f}%
+1. TP % Price Distance = ({tp_usd} / {notional}) * (100 / {leverage}) = {tp_pct_dist:.4f}%
+2. SL % Price Distance = ({sl_usd} / {notional}) * (100 / {leverage}) = {sl_pct_dist:.4f}%
 3. ATR % Velocity = ({atr_val} / {close_price}) * 100 = {atr_vel_pct:.4f}%
 
 === SCALPER EVALUATION CHECKLIST ===
-1. Volatility Feasibility: Compare TP % Distance ({tp_pct_dist:.4f}%) to ATR % Velocity ({atr_vel_pct:.4f}%). For a fast scalp, the TP % must be achievable within 1 to 3 average candle moves (ATR). If the target requires a massive, multi-ATR extension without explosive volume, flag it as unviable.
+1. Volatility Feasibility: Compare TP % Price Distance ({tp_pct_dist:.4f}%) to ATR % Velocity ({atr_vel_pct:.4f}%). For a fast scalp, the TP % must be achievable within 1 to 3 average candle moves (ATR). If the target requires a massive, multi-ATR extension without explosive volume, flag it as unviable.
 2. Order Book Delta (CRITICAL): Analyze the Bid/Ask ratio and spread. Massive imbalances (e.g., >3x) indicate immediate aggressive market orders hitting the book.
 3. Micro-Momentum Velocity: Check the last 15 close prices. Is price accelerating toward the target? Ignore macro EMAs (4H/1D) if immediate short-term velocity is explosive.
 4. Execution Environment: If Bollinger %B is near extremes (>= 0.90 or <= 0.10) combined with heavy volume, expect an immediate breakout extension toward your TP.
@@ -275,7 +296,7 @@ Stop Loss: ${sl_usd} ({sl_pct:.2f}% of notional)
 {conditional_block}
 
 Respond ONLY with valid JSON. Keep reasoning under 50 words:
-{{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "[Include calculated TP% vs ATR% here] ..."}}"""
+{{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "[Include calculated TP%Price vs ATR% here] ..."}}"""
 
 
 def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key_label: str = "secondary") -> dict | None:
@@ -306,6 +327,43 @@ def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key
             content = body["choices"][0]["message"]["content"]
             extracted = _extract_json(content)
             parsed = _parse_response(key_label, model, key_label, extracted)
+            return parsed
+    except Exception as e:
+        logger.warning(f"{key_label}: {e}")
+        return {"_error": f"EXC_{e}"}
+
+
+def call_groq(api_key: str, prompt: str, key_label: str = "groq") -> dict | None:
+    if not api_key:
+        logger.warning(f"{key_label}: no API key configured")
+        return None
+
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "top_p": 0.1,
+        "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        with httpx.Client() as client:
+            resp = client.post(GROQ_BASE_URL, json=payload, headers=headers)
+            _groq_rate_acquire()
+            if resp.status_code == 429:
+                logger.warning(f"{key_label}: 429 rate limited")
+                return {"_error": "rate_limited_429"}
+            if resp.status_code != 200:
+                logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
+                return {"_error": f"HTTP_{resp.status_code}"}
+            body = resp.json()
+            content = body["choices"][0]["message"]["content"]
+            extracted = _extract_json(content)
+            parsed = _parse_response(key_label, GROQ_MODEL, key_label, extracted)
             return parsed
     except Exception as e:
         logger.warning(f"{key_label}: {e}")
@@ -425,6 +483,8 @@ def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
         if ptype == "gemini":
             _gemini_rate_acquire()
             last = call_gemini_http(key, label, prompt)
+        elif ptype == "groq":
+            last = call_groq(key, prompt, label)
         else:
             _openrouter_rate_acquire()
             last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label)
