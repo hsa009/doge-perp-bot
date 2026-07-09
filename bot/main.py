@@ -754,6 +754,7 @@ def open_trade(signal: dict, coin: str = "DOGE") -> bool:
 def close_position_in_db(coin: str = "DOGE"):
     try:
         open_trades = db.get_open_trades()
+        pnl = 0.0
         if open_trades:
             t = open_trades[0]
             exit_price = hl.get_current_price(coin)
@@ -767,9 +768,9 @@ def close_position_in_db(coin: str = "DOGE"):
                 "exit_reason": "tp_sl",
                 "net_pnl_usd": pnl,
             })
+            event_type = "tp_hit" if pnl >= 0 else "sl_hit"
+            redis.client.lpush("queue:discord_alerts", json.dumps({"event_type": event_type, "coin": coin, "side": direction, "price": exit_price, "pnl": pnl}))
         db.log("INFO", f"Trade closed by trigger order ({coin})")
-        event_type = "tp_hit" if pnl >= 0 else "sl_hit"
-        redis.client.lpush("queue:discord_alerts", json.dumps({"event_type": event_type, "coin": coin, "side": direction, "price": exit_price, "pnl": pnl}))
     except Exception as ex:
         logger.exception(f"close_position_in_db error: {ex}")
     redis.clear_position()
