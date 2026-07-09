@@ -23,17 +23,26 @@ async def _tg_send(chat_id, text, token):
     )
 
 
-async def _fetch_api(path, env):
+async def _fetch_api(path, env, timeout_ms=0):
     base = getattr(env, "HF_SPACE_URL", "") or ""
     if not base:
         return None
-    resp = await js.fetch(
-        f"{base}{path}",
-        js.JSON.parse(json.dumps({"method": "GET"})),
-    )
-    if resp.status != 200:
+    opts = {"method": "GET"}
+    if timeout_ms > 0:
+        controller = js.AbortController.new()
+        js.setTimeout(controller.abort, timeout_ms)
+        opts["signal"] = controller.signal
+    try:
+        resp = await js.fetch(
+            f"{base}{path}",
+            js.JSON.parse(json.dumps(opts)),
+        )
+        if resp.status != 200:
+            return None
+        return json.loads(await resp.text())
+    except Exception as e:
+        js.console.log(f"[_fetch_api] error for {path}: {e}")
         return None
-    return json.loads(await resp.text())
 
 
 async def _call_api(path, method, env, body=None):
@@ -150,14 +159,12 @@ async def on_fetch(request, env):
             await _tg_send(chat_id, "pong", token)
 
         elif text == "/debug":
-            try:
-                data = await _fetch_api("/api/v1/coin-key-map", env)
-            except Exception as e:
-                await _tg_send(chat_id, f"Debug error: {e}", token)
-                data = None
+            data = await _fetch_api("/api/v1/debug-keys", env, timeout_ms=20000)
             if not data:
-                await _tg_send(chat_id, "Debug: no data", token)
-            else:
+                data = await _fetch_api("/api/v1/coin-key-map", env)
+            if not data:
+                await _tg_send(chat_id, "Debug: HF Space unreachable", token)
+            elif "mapping" in data:
                 mapping = data.get("mapping", {})
                 msg = "Keys per coin:"
                 for coin in sorted(mapping.keys()):
@@ -166,6 +173,23 @@ async def on_fetch(request, env):
                     keys = ", ".join(info.get("keys", []))
                     msg += f"\n{coin}: {count} key(s) {keys}"
                 msg += f"\n\nTotal coins: {data.get('total_coins', 0)}"
+                await _tg_send(chat_id, msg, token)
+            else:
+                total = data.get("total", 0)
+                working = data.get("working", 0)
+                msg = f"Debug: {working}/{total} keys working"
+                results = data.get("results", {})
+                for coin in sorted(results.keys()):
+                    for entry in results[coin]:
+                        err = entry.get("error") or entry.get("exc") or ""
+                        label = entry.get("label", "")
+                        http = entry.get("http", "")
+                        key_preview = entry.get("key_preview", "")
+                        if entry.get("ok"):
+                            msg += f"\n{coin}: {label} ({key_preview}) OK"
+                        else:
+                            err_snippet = (err[:60] if err else f"HTTP_{http}")
+                            msg += f"\n{coin}: {label} ({key_preview}) FAIL {err_snippet}"
                 await _tg_send(chat_id, msg, token)
 
         return js.Response.new("OK")
