@@ -92,7 +92,7 @@ _GEMINI_KEY_INDEX = 0
 _GEMINI_RING_LOCK = threading.Lock()
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "qwen/qwen3-next-80b-a3b-instruct:free"
+OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
 
 _OPENROUTER_LAST_CALL = 0.0
 _openrouter_rate_lock = threading.Lock()
