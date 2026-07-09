@@ -92,7 +92,7 @@ _GEMINI_KEY_INDEX = 0
 _GEMINI_RING_LOCK = threading.Lock()
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "llama-3.1-8b-instant"
 
 _groq_last_call = 0.0
 _groq_rate_lock = threading.Lock()
@@ -103,8 +103,8 @@ def _groq_rate_acquire() -> float:
     with _groq_rate_lock:
         now = time.time()
         elapsed = now - _groq_last_call
-        if elapsed < 10.0:
-            wait = 10.0 - elapsed
+        if elapsed < 2.0:
+            wait = 2.0 - elapsed
             time.sleep(wait)
             _groq_last_call = now + wait
             return wait
