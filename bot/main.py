@@ -1538,6 +1538,70 @@ def coin_key_map():
         mapping[coin] = {"keys": [k[:12]+"..."+k[-4:] for k in keys if k], "count": len(keys)}
     return jsonify({"mapping": mapping, "total_coins": len(mapping)})
 
+@app.route("/api/v1/debug-keys")
+def debug_keys():
+    import os, httpx, time
+    from bot.config import get_coin_api_keys, COIN_LIST
+
+    results = {}
+    seen_keys = set()
+
+    for coin in COIN_LIST:
+        coin_results = []
+        for ptype, key in get_coin_api_keys(coin):
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            label = f"{coin}_{ptype}"
+            entry = {"type": ptype, "label": label, "key_preview": key[:8] + "..." + key[-4:]}
+
+            if ptype == "gemini":
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
+                payload = {"contents": [{"parts": [{"text": "hi"}]}]}
+                try:
+                    resp = httpx.post(url, json=payload, timeout=15)
+                    entry["http"] = resp.status_code
+                    if resp.status_code == 200:
+                        body = resp.json()
+                        candidates = body.get("candidates", [])
+                        entry["ok"] = bool(candidates)
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            entry["reply"] = (parts[0]["text"][:80] if parts else None)
+                    else:
+                        err = resp.json().get("error", {}).get("message", resp.text[:200])
+                        entry["error"] = err[:120]
+                except Exception as e:
+                    entry["exc"] = str(e)[:120]
+            else:
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                payload = {
+                    "model": "qwen/qwen3-next-80b-a3b-instruct:free",
+                    "messages": [{"role": "user", "content": "hi"}],
+                }
+                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+                try:
+                    resp = httpx.post(url, json=payload, headers=headers, timeout=15)
+                    entry["http"] = resp.status_code
+                    if resp.status_code == 200:
+                        body = resp.json()
+                        content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        entry["ok"] = bool(content)
+                        entry["reply"] = content[:80] if content else None
+                    else:
+                        entry["error"] = resp.text[:200]
+                except Exception as e:
+                    entry["exc"] = str(e)[:120]
+
+            coin_results.append(entry)
+            time.sleep(1)
+        results[coin] = coin_results
+
+    total = sum(len(v) for v in results.values())
+    working = sum(1 for v in results.values() for e in v if e.get("ok"))
+    return jsonify({"total": total, "working": working, "results": results})
+
 
 def ai_loop():
     logger.info("AI engine started (15-min cycle)")
