@@ -350,16 +350,16 @@ def call_groq(api_key: str, prompt: str, key_label: str = "groq") -> dict | None
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    _groq_rate_acquire()
     try:
-        with httpx.Client() as client:
+        with httpx.Client(timeout=30) as client:
             resp = client.post(GROQ_BASE_URL, json=payload, headers=headers)
-            _groq_rate_acquire()
             if resp.status_code == 429:
-                logger.warning(f"{key_label}: 429 rate limited")
-                return {"_error": "rate_limited_429"}
+                logger.warning(f"{key_label}: 429 rate limited: {resp.text[:200]}")
+                return {"_error": f"rate_limited_429: {resp.text[:100]}"}
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
-                return {"_error": f"HTTP_{resp.status_code}"}
+                return {"_error": f"HTTP_{resp.status_code}: {resp.text[:100]}"}
             body = resp.json()
             content = body["choices"][0]["message"]["content"]
             extracted = _extract_json(content)
