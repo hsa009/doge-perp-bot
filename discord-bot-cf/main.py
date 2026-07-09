@@ -11,16 +11,22 @@ async def _tg_send(chat_id, text, token):
         "text": text,
         "parse_mode": "Markdown",
     })
-    await js.fetch(
-        url,
-        js.JSON.parse(
-            json.dumps({
-                "method": "POST",
-                "headers": {"Content-Type": "application/json"},
-                "body": payload,
-            })
-        ),
-    )
+    try:
+        resp = await js.fetch(
+            url,
+            js.JSON.parse(
+                json.dumps({
+                    "method": "POST",
+                    "headers": {"Content-Type": "application/json"},
+                    "body": payload,
+                })
+            ),
+        )
+        body = json.loads(await resp.text())
+        if not body.get("ok"):
+            js.console.log(f"[_tg_send] failed: {json.dumps(body)}")
+    except Exception as e:
+        js.console.log(f"[_tg_send] exception: {e}")
 
 
 async def _fetch_api(path, env, timeout_ms=0):
@@ -213,13 +219,20 @@ async def _alert_text(alert):
     side = (alert.get("side") or "").upper()
     price = alert.get("price", 0)
     pnl = alert.get("pnl")
+    size = alert.get("size")
+    lev = alert.get("leverage")
+    conf = alert.get("confidence")
 
     if event == "position_opened":
-        return f"*POSITION OPENED*\n{side} {coin} @ ${float(price):.5f}"
+        color = "🟢" if side == "LONG" else "🔴"
+        size_str = f" {size} {coin}" if size else f" {coin}"
+        lev_str = f" {lev}x" if lev else ""
+        conf_str = f" (conf: {conf:.2f})" if conf else ""
+        return f"{color} *{side}*{size_str} @ ${float(price):.5f}{lev_str}{conf_str}"
     elif event == "tp_hit":
-        return f"*TAKE PROFIT HIT*\n{side} {coin} @ ${float(price):.5f}  PnL: ${float(pnl):.2f}"
+        return f"✅ *TP HIT*\n{side} {coin} @ ${float(price):.5f}  PnL: ${float(pnl):.2f}"
     elif event == "sl_hit":
-        return f"*STOP LOSS HIT*\n{side} {coin} @ ${float(price):.5f}  PnL: ${float(pnl):.2f}"
+        return f"🛑 *SL HIT*\n{side} {coin} @ ${float(price):.5f}  PnL: ${float(pnl):.2f}"
     return json.dumps(alert)
 
 

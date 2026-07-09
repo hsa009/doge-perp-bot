@@ -741,7 +741,7 @@ def open_trade(signal: dict, coin: str = "DOGE") -> bool:
             pass
         logger.info(f"Trade opened successfully")
         redis.clear_current_signal()
-        redis.client.lpush("queue:discord_alerts", json.dumps({"event_type": "position_opened", "coin": coin, "side": signal["direction"], "price": entry_price}))
+        redis.client.lpush("queue:discord_alerts", json.dumps({"event_type": "position_opened", "coin": coin, "side": signal["direction"], "price": entry_price, "size": notional, "leverage": lev, "confidence": signal.get("confidence")}))
         return True
     except Exception as e:
         logger.exception(f"open_trade error: {e}")
