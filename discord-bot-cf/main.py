@@ -129,21 +129,21 @@ async def on_fetch(request, env):
             msg = "Position closed" if (result or {}).get("ok") else "Failed to close or no position open"
             await _tg_send(chat_id, msg, token)
 
+        elif text == "/ping":
+            await _tg_send(chat_id, "pong", token)
+
         elif text == "/debug":
             try:
                 data = await _fetch_api("/api/v1/debug-keys", env)
             except Exception as e:
-                js.console.log(f"[debug] error: {e}")
+                await _tg_send(chat_id, f"Debug error: {e}", token)
                 data = None
-            if not data:
-                await _tg_send(chat_id, "Debug: failed to fetch /api/v1/debug-keys from HF Space", token)
-            else:
-                lines = ["*Key Debug*", ""]
-                lines.append(f"Working: {data.get('working', 0)} / {data.get('total', 0)}")
-                lines.append("")
+            if data:
+                total = data.get("total", 0)
+                working = data.get("working", 0)
+                msg = f"Debug: {working}/{total} keys working"
                 results = data.get("results", {})
                 for coin in sorted(results.keys()):
-                    lines.append(f"*{coin}*")
                     for entry in results[coin]:
                         status = "OK" if entry.get("ok") else "FAIL"
                         err = entry.get("error") or entry.get("exc") or ""
@@ -151,12 +151,11 @@ async def on_fetch(request, env):
                         http = entry.get("http", "")
                         key_preview = entry.get("key_preview", "")
                         if entry.get("ok"):
-                            lines.append(f"  {label} ({key_preview}) — *OK*")
+                            msg += f"\n{coin}: {label} ({key_preview}) OK"
                         else:
-                            err_snippet = (err[:80] if err else f"HTTP_{http}")
-                            lines.append(f"  {label} ({key_preview}) — *FAIL* `{err_snippet}`")
-                    lines.append("")
-                await _tg_send(chat_id, "\n".join(lines), token)
+                            err_snippet = (err[:60] if err else f"HTTP_{http}")
+                            msg += f"\n{coin}: {label} ({key_preview}) FAIL {err_snippet}"
+                await _tg_send(chat_id, msg, token)
 
         return js.Response.new("OK")
     except Exception as e:
