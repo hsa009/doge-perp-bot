@@ -103,8 +103,8 @@ def _groq_rate_acquire() -> float:
     with _groq_rate_lock:
         now = time.time()
         elapsed = now - _groq_last_call
-        if elapsed < 2.0:
-            wait = 2.0 - elapsed
+        if elapsed < 10.0:
+            wait = 10.0 - elapsed
             time.sleep(wait)
             _groq_last_call = now + wait
             return wait
