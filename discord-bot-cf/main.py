@@ -45,7 +45,7 @@ async def _fetch_api(path, env, timeout_ms=0):
         return None
 
 
-async def _call_api(path, method, env, body=None):
+async def _call_api(path, method, env, body=None, timeout_ms=15000):
     base = getattr(env, "HF_SPACE_URL", "") or ""
     if not base:
         return None
@@ -53,13 +53,21 @@ async def _call_api(path, method, env, body=None):
     if body:
         opts["headers"] = {"Content-Type": "application/json"}
         opts["body"] = json.dumps(body)
-    resp = await js.fetch(
-        f"{base}{path}",
-        js.JSON.parse(json.dumps(opts)),
-    )
-    if resp.status >= 400:
+    if timeout_ms > 0:
+        controller = js.AbortController.new()
+        js.setTimeout(controller.abort, timeout_ms)
+        opts["signal"] = controller.signal
+    try:
+        resp = await js.fetch(
+            f"{base}{path}",
+            js.JSON.parse(json.dumps(opts)),
+        )
+        if resp.status >= 400:
+            return None
+        return json.loads(await resp.text())
+    except Exception as e:
+        js.console.log(f"[_call_api] error for {path}: {e}")
         return None
-    return json.loads(await resp.text())
 
 
 async def on_fetch(request, env):
@@ -150,7 +158,8 @@ async def on_fetch(request, env):
         elif text == "/close":
             try:
                 result = await _call_api("/api/v1/bot/close-position", "POST", env)
-            except Exception:
+            except Exception as e:
+                js.console.log(f"[close] exception: {e}")
                 result = None
             msg = "Position closed" if (result or {}).get("ok") else "Failed to close or no position open"
             await _tg_send(chat_id, msg, token)
