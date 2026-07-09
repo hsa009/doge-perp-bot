@@ -327,7 +327,7 @@ def call_groq(api_key: str, prompt: str, key_label: str = "groq") -> dict | None
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
         "top_p": 0.1,
-        "max_tokens": 2048,
+        "max_tokens": 300,
         "response_format": {"type": "json_object"},
     }
     headers = {
@@ -339,10 +339,8 @@ def call_groq(api_key: str, prompt: str, key_label: str = "groq") -> dict | None
         with httpx.Client(timeout=30) as client:
             resp = client.post(GROQ_BASE_URL, json=payload, headers=headers)
             if resp.status_code == 429:
-                remaining = resp.headers.get("x-ratelimit-remaining-tokens", "?")
-                reset = resp.headers.get("x-ratelimit-reset-tokens", "?")
-                logger.warning(f"{key_label}: 429 rate limited (remaining={remaining} reset={reset}): {resp.text[:200]}")
-                return {"_error": f"rate_limited_429 (remaining={remaining},reset={reset}): {resp.text[:200]}"}
+                logger.warning(f"{key_label}: 429 rate limited: {resp.text[:200]}")
+                return {"_error": f"rate_limited_429: {resp.text[:100]}"}
             if resp.status_code != 200:
                 logger.warning(f"{key_label}: HTTP {resp.status_code} {resp.text[:200]}")
                 return {"_error": f"HTTP_{resp.status_code}: {resp.text[:100]}"}
