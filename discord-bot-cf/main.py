@@ -132,10 +132,11 @@ async def on_fetch(request, env):
         elif text == "/debug":
             try:
                 data = await _fetch_api("/api/v1/debug-keys", env)
-            except Exception:
+            except Exception as e:
+                js.console.log(f"[debug] error: {e}")
                 data = None
             if not data:
-                await _tg_send(chat_id, "Failed to fetch key debug info", token)
+                await _tg_send(chat_id, "Debug: failed to fetch /api/v1/debug-keys from HF Space", token)
             else:
                 lines = ["*Key Debug*", ""]
                 lines.append(f"Working: {data.get('working', 0)} / {data.get('total', 0)}")
