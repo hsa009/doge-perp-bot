@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import httpx
 import pandas as pd
 
-from bot.config import AI_MODELS, get_coin_api_keys
+from bot.config import AI_MODELS, COIN_LIST, get_coin_api_keys
 from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
 
 logger = logging.getLogger(__name__)
@@ -461,18 +461,26 @@ def call_gemini_http_with_retry(prompt: str, max_retries: int = 5, coin_keys: li
 
 def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
     last = None
-    for idx, (ptype, key) in enumerate(coin_keys or []):
+    for idx, (ptype, k) in enumerate(coin_keys or []):
         label = f"{ptype}_{'primary' if idx == 0 else 'backup'}#{idx}"
         if ptype == "gemini":
-            last = call_gemini_http(key, label, prompt)
+            last = call_gemini_http(k, label, prompt)
         elif ptype == "groq":
-            last = call_groq(key, prompt, label)
+            last = call_groq(k, prompt, label)
         else:
             _openrouter_rate_acquire()
-            last = call_openai_compat(OPENROUTER_BASE, key, OPENROUTER_MODEL, prompt, label)
+            last = call_openai_compat(OPENROUTER_BASE, k, OPENROUTER_MODEL, prompt, label)
         if last and "_error" not in last:
             return last
         time.sleep(5)
+    for coin in COIN_LIST:
+        for i, suffix in enumerate(["primary", "backup"]):
+            k = os.environ.get(f"{coin}_GEMINI_{'KEY' if i == 0 else 'BACKUP'}", "")
+            if k:
+                last = call_gemini_http(k, f"shared_{coin}_{suffix}#{i}", prompt)
+                if last and "_error" not in last:
+                    return last
+                time.sleep(3)
     return last
 
 
