@@ -764,7 +764,13 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     if gemini_valid:
         winner = gemini_result["direction"]
         confidence = float(gemini_result.get("confidence", 0.5))
-        reasons = f"Gemini: {winner.upper()}({confidence:.2f})"
+        if details:
+            d = details[0]
+            provider = d.get("name", "model")
+            model_reasoning = d.get("reasoning", "")
+            reasons = f"{provider}: {winner.upper()}({confidence:.2f}) — {model_reasoning[:120]}"
+        else:
+            reasons = f"Gemini: {winner.upper()}({confidence:.2f})"
     else:
         winner = "wait"
         confidence = 0.0
