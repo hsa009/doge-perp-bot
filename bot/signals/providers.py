@@ -481,6 +481,19 @@ def call_provider_with_retry(prompt, max_retries=5, coin_keys=None):
                 if last and "_error" not in last:
                     return last
                 time.sleep(3)
+    for coin, info in SECONDARY_PROVIDERS.items():
+        k = os.environ.get(info["env_var"], "")
+        if k:
+            throttle = _provider_throttles.get(info["throttle"])
+            if throttle:
+                wait = throttle.acquire()
+                if wait > 0:
+                    time.sleep(wait)
+            last = call_openai_compat(info["base_url"], k, info["model"], prompt,
+                                      key_label=f"fallback_{coin}_{info['provider']}")
+            if last and "_error" not in last:
+                return last
+            time.sleep(3)
     return last
 
 
