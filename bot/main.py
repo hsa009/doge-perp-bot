@@ -1135,9 +1135,10 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
     return macro_trend, liq_price, liq_dist_pct
 
 
-def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> dict | None:
+def _run_single_coin_signal(coin: str, market_context: dict | None = None, ohlcv: pd.DataFrame | None = None) -> dict | None:
     cfg = get_runtime_config()
-    ohlcv = _fetch_ohlcv(coin)
+    if ohlcv is None:
+        ohlcv = _fetch_ohlcv(coin)
     if ohlcv is None or ohlcv.empty:
         logger.warning(f"{coin}: no OHLCV — skipping")
         return None
@@ -1200,7 +1201,7 @@ def _run_single_coin_signal(coin: str, market_context: dict | None = None) -> di
     return signal
 
 
-def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
+def run_multi_asset_signal(coins: list[str] | None = None, ohlcv_data: dict[str, pd.DataFrame] | None = None) -> dict[str, dict]:
     logger.info("=== MULTI-ASSET SIGNAL RUN START ===")
     if coins is None:
         coins = COIN_LIST
@@ -1223,7 +1224,8 @@ def run_multi_asset_signal(coins: list[str] | None = None) -> dict[str, dict]:
 
     def _run_coin(coin, ctx):
         try:
-            result = _run_single_coin_signal(coin, ctx)
+            ohlcv = (ohlcv_data or {}).get(coin)
+            result = _run_single_coin_signal(coin, ctx, ohlcv=ohlcv)
             if result:
                 with results_lock:
                     signals[coin] = result
@@ -1606,6 +1608,21 @@ def debug_keys():
     return jsonify({"total": total, "working": working, "results": results})
 
 
+def _refresh_ohlcv_data(coins: list[str]) -> dict[str, pd.DataFrame]:
+    """Fetch fresh 15m OHLCV data for all coins. Returns dict[coin, DataFrame]."""
+    data: dict[str, pd.DataFrame] = {}
+    for coin in coins:
+        try:
+            ohlcv = _fetch_ohlcv(coin)
+            if ohlcv is not None and not ohlcv.empty and len(ohlcv) >= 32:
+                data[coin] = ohlcv
+            else:
+                logger.warning(f"_refresh_ohlcv_data: {coin} bad/empty (len={len(ohlcv) if ohlcv is not None else 0})")
+        except Exception as e:
+            logger.warning(f"_refresh_ohlcv_data: {coin} fetch failed: {e}")
+    return data
+
+
 def ai_loop():
     logger.info("AI engine started (15-min cycle)")
     first = True
@@ -1618,7 +1635,19 @@ def ai_loop():
             first = False
 
             redis.set_config("ai_loop_heartbeat", str(time.time()))
-            signals = run_multi_asset_signal()
+
+            enabled_coins = redis.get_enabled_coins()
+            refresh_targets = [c for c in COIN_LIST if c in enabled_coins]
+            if not refresh_targets:
+                logger.info("No enabled coins — skipping cycle")
+                continue
+
+            ohlcv_map = _refresh_ohlcv_data(refresh_targets)
+            if not ohlcv_map:
+                logger.error("_refresh_ohlcv_data: no coins returned valid data — skipping ENTIRE cycle")
+                continue
+
+            signals = run_multi_asset_signal(coins=list(ohlcv_map.keys()), ohlcv_data=ohlcv_map)
             aggregate_signals(signals)
 
             redis.set_config("ai_loop_ready", "1")

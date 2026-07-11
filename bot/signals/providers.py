@@ -141,6 +141,13 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
     vol_ma_20 = sma(volumes, 20)
     adx_v = adx(highs, lows, closes, 14)
 
+    last_32df = ohlcv.tail(32)
+    last_32_candles = [
+        [round(float(r["open"]), 5), round(float(r["high"]), 5),
+         round(float(r["low"]), 5), round(float(r["close"]), 5)]
+        for _, r in last_32df.iterrows()
+    ]
+
     last = lambda s: float(s.iloc[-1]) if s is not None and not s.empty else 0.0
     prev = lambda s: float(s.iloc[-2]) if s is not None and len(s) > 1 else 0.0
 
@@ -154,6 +161,7 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
         "ema_21": last(ema_21),
         "ema_50": last(ema_50),
         "rsi": last(rsi_v),
+        "rsi_15m": last(rsi_v),
         "macd_line": last(macd_v["macd"]),
         "macd_signal": last(macd_v["signal"]),
         "macd_histogram": last(macd_v["histogram"]),
@@ -165,6 +173,7 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
         "adx": last(adx_v),
         "ema_9_prev": prev(ema_9),
         "ema_21_prev": prev(ema_21),
+        "last_32_candles_array": last_32_candles,
     }
 
 
@@ -181,106 +190,63 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
                  liq_dist_pct: float = 0.0) -> str:
     i = indicators
     vol_ratio = i["volume"] / i["vol_ma_20"] if i["vol_ma_20"] > 0 else 1.0
-    bb_pct = (i["close"] - i["bb_lower"]) / (i["bb_upper"] - i["bb_lower"]) if (i["bb_upper"] - i["bb_lower"]) > 0 else 0.5
-
     notional = trade_amount * leverage
     tp_pct = (tp_usd / notional) * 100
     sl_pct = (sl_usd / notional) * 100
-
     close_price = i["close"]
     atr_val = i["atr"]
-    tp_pct_dist = (tp_usd / notional) * (100 / leverage)
-    sl_pct_dist = (sl_usd / notional) * (100 / leverage)
-    atr_vel_pct = (atr_val / close_price) * 100
+    rsi_val = i.get("rsi_15m", i.get("rsi", 50))
 
-    history_block = ""
-    if last_signal_direction:
-        history_block += f"\nPrevious signal: {last_signal_direction.upper()}"
-        if last_signal_reasoning:
-            history_block += f" — \"{last_signal_reasoning[:80]}\""
-    if current_pnl is not None:
-        history_block += f"\nUnrealized PnL: ${current_pnl:.2f}"
+    ob = (market_context or {}).get("order_book", {})
+    bid_vol = ob.get("bid_volume", 0)
+    ask_vol = ob.get("ask_volume", 0)
+    spread_pct = ob.get("spread_pct", 0)
+    funding_rate = (market_context or {}).get("funding_rate", 0)
+    oi = (market_context or {}).get("open_interest", 0)
+    ratio_str = f"{bid_vol / ask_vol:.2f}x" if ask_vol > 0 else "N/A"
 
-    market_block = ""
-    if market_context:
-        ob = market_context.get("order_book", {})
-        bids = ob.get("bids", [])
-        asks = ob.get("asks", [])
-        bid_vol = ob.get("bid_volume", 0)
-        ask_vol = ob.get("ask_volume", 0)
-        spread_pct = ob.get("spread_pct", 0)
-        funding_rate = market_context.get("funding_rate", 0)
-        funding_ann = market_context.get("funding_annualized_pct", 0)
-        funding_sig = market_context.get("funding_signal", "neutral")
-        oi = market_context.get("open_interest", 0)
+    candles_str = str(i.get("last_32_candles_array", []))
 
-        closes_str = ", ".join(f"${c:.5f}" for c in market_context.get("recent_closes", []))
+    return f"""You are a high-frequency {coin} perpetual futures scalping hunter. Your objective is to hunt for micro-level order-flow imbalances that can achieve our strict Target Profit. Capital preservation is paramount; never force an entry. If an edge is unclear, hold.
 
-        bid_px_str = f"${bids[0][0]:.5f}" if bids else "?"
-        ask_px_str = f"${asks[0][0]:.5f}" if asks else "?"
-        ratio_str = f"{bid_vol / ask_vol:.2f}x" if ask_vol > 0 else "N/A"
-
-        market_block = f"""
-  Order Book: Bids {int(bid_vol)} @ {bid_px_str} vs Asks {int(ask_vol)} @ {ask_px_str}
-  Bid/Ask Ratio: {ratio_str}
-  Spread: {spread_pct:.4f}%
-  Funding Rate: {funding_rate:.6f}% hourly ({funding_ann:.2f}% APR) — {funding_sig}
-  Open Interest: ${oi:,.0f}
-  Recent Close Trend (last 15): {closes_str}"""
-
-    if consecutive_waits >= 3:
-        conditional_block = (
-            "=== CRITICAL CONDITIONALS ===\n"
-            "\u26a0\ufe0f FORCED TIE-BREAKER PROTOCOL ACTIVE: You have chosen WAIT 3+ times "
-            "consecutively. You are now REQUIRED to break the deadlock and select LONG or SHORT.\n"
-            "1. Use the Order Book Ratio or Macro Trend to break the tie\u2014lean heavily in "
-            "the direction of the macro bias.\n"
-            "2. Because this is a forced choice under ambiguous conditions, your "
-            '"confidence" score MUST reflect this. Set confidence strictly between '
-            "0.1 and 0.4 to signal a low-probability forced entry."
-        )
-        direction_enum = '"long"|"short"'
-    else:
-        conditional_block = (
-            "=== CRITICAL EXECUTION RULE ===\n"
-            "Your primary directive is execution efficiency based on immediate math and order-flow.\n\n"
-            "* TRIGGER LONG: Order book heavily favors bids, short-term price trend is accelerating upward, volume is high, and the calculated TP % is easily achievable within current ATR limits.\n"
-            "* TRIGGER SHORT: Order book heavily favors asks, short-term price trend is cascading downward, volume confirms selling, and the calculated TP % is within current ATR limits.\n"
-            "* TRIGGER WAIT: If the calculated TP % requires a price move that is too large relative to the current ATR (market is too dead to reach your target), if the risk/reward ratio is mathematically unfavorable, or if the order book is balanced 1:1."
-        )
-        direction_enum = '"long"|"short"|"wait"'
-
-    return f"""You are a hyper-aggressive, high-frequency {coin} perpetual futures scalping engine. Your sole objective is to exploit micro-level order-flow imbalances and rapid liquidity shifts. You dynamically calculate risk-to-reward viability on every single tick.
-
-=== TECHNICAL & CONFIG DATA ===
+=== LIVE DATA ===
 Current Price: ${close_price:.5f}
+RSI (15m): {rsi_val:.1f}
 ATR(14): ${atr_val:.5f}
-Bollinger %B: {bb_pct:.2f}
-Volume ratio (vs 20-avg): {vol_ratio:.2f}x
-Market regime: {regime}
-Macro trend (4H/1D): {macro_trend}
-Estimated Liquidation Price: ${liq_price} ({liq_dist_pct}% from current)
-Position: ${trade_amount} margin @ {leverage}x = ${notional:.0f} notional
+Volume Ratio (vs 20-avg): {vol_ratio:.2f}x
+Spread: {spread_pct:.4f}%
+Macro Trend (4H/1D): {macro_trend}
+Order Book: Bids {int(bid_vol)} vs Asks {int(ask_vol)} (Ratio: {ratio_str})
+Funding Rate: {funding_rate:.6f}%
+Open Interest: ${oi:,.0f}
+
+=== HUNTING PARAMETERS ===
 Target Profit: ${tp_usd} ({tp_pct:.2f}% of notional)
 Stop Loss: ${sl_usd} ({sl_pct:.2f}% of notional)
-{market_block}
-{history_block}
 
-=== REQUIRED PRE-TRADE MATHEMATICAL ASSESSMENT ===
-1. TP % Price Distance = ({tp_usd} / {notional}) * (100 / {leverage}) = {tp_pct_dist:.4f}%
-2. SL % Price Distance = ({sl_usd} / {notional}) * (100 / {leverage}) = {sl_pct_dist:.4f}%
-3. ATR % Velocity = ({atr_val} / {close_price}) * 100 = {atr_vel_pct:.4f}%
+=== PRICE ACTION (Last 32 15m Candles) ===
+Format: [Open, High, Low, Close] (High = Resistance, Low = Support)
+{candles_str}
 
-=== SCALPER EVALUATION CHECKLIST ===
-1. Volatility Feasibility: Compare TP % Price Distance ({tp_pct_dist:.4f}%) to ATR % Velocity ({atr_vel_pct:.4f}%). For a fast scalp, the TP % must be achievable within 1 to 3 average candle moves (ATR). If the target requires a massive, multi-ATR extension without explosive volume, flag it as unviable.
-2. Order Book Delta (CRITICAL): Analyze the Bid/Ask ratio and spread. Massive imbalances (e.g., >3x) indicate immediate aggressive market orders hitting the book.
-3. Micro-Momentum Velocity: Check the last 15 close prices. Is price accelerating toward the target? Ignore macro EMAs (4H/1D) if immediate short-term velocity is explosive.
-4. Execution Environment: If Bollinger %B is near extremes (>= 0.90 or <= 0.10) combined with heavy volume, expect an immediate breakout extension toward your TP.
+=== EXECUTION RULES ===
+* LONG: Last 3 candles MUST show consecutive higher supports (Lows) and higher resistances (Highs). RSI confirms momentum. ATR supports {tp_pct:.2f}%. Volume Ratio > 1.0x. Spread is tight. Macro Trend is NOT strongly bearish.
+* SHORT: Last 3 candles MUST show consecutive lower supports (Lows) and lower resistances (Highs). RSI confirms momentum. ATR supports {tp_pct:.2f}%. Volume Ratio > 1.0x. Spread is tight. Macro Trend is NOT strongly bullish.
+* WAIT: 3-candle structure is broken/ranging, ATR is too low, volume is dead, spread is too wide, or setup fights the macro trend.
 
-{conditional_block}
+Respond ONLY with valid JSON. Use the "analysis" block to map the structure, volatility, and context before deciding.
 
-Respond ONLY with valid JSON. Keep reasoning under 50 words:
-{{"direction": {direction_enum}, "confidence": 0.0-1.0, "reasoning": "[Include calculated TP%Price vs ATR% here] ..."}}"""
+{{
+  "analysis": {{
+    "three_candle_structure": "Analyze Highs and Lows of the last 3 candles. Higher highs/lows or lower highs/lows?",
+    "rsi_momentum": "Does current RSI support the 3-candle structure?",
+    "volatility_and_spread": "Compare {tp_pct:.2f}% to ATR. Is spread low enough and volatility high enough?",
+    "volume_and_macro": "Is the Volume Ratio > 1.0x? Does the Macro Trend block this trade?",
+    "order_book_edge": "Who controls the book?"
+  }},
+  "direction": "long|short|wait",
+  "confidence": 0.0,
+  "reasoning": "Under 20 words."
+}}"""
 
 
 def call_openai_compat(base_url: str, api_key: str, model: str, prompt: str, key_label: str = "secondary") -> dict | None:
@@ -625,6 +591,20 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
 
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
+
+    last_32 = indicators.get("last_32_candles_array", [])
+    if not last_32 or len(last_32) < 32:
+        logger.error(f"{coin}: GUARDRAIL — last_32_candles_array has {len(last_32)} entries, skipping AI call")
+        return {
+            "direction": "wait",
+            "confidence": 0.0,
+            "regime": regime,
+            "reasoning": "Guardrail: insufficient or missing market data",
+            "model_details": [],
+            "vote_tally": {"long": 0, "short": 0, "wait": 0},
+            "cycle_id": uuid.uuid4().hex[:12],
+            "_debug_calls": {"guardrail": f"last_32_candles_array missing ({len(last_32)} candles)"},
+        }
 
     if market_context and ohlcv is not None and not ohlcv.empty:
         closes = [round(float(c), 5) for c in ohlcv["close"].tail(15).tolist()]
