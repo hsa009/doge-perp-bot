@@ -11,7 +11,7 @@ import httpx
 import pandas as pd
 
 from bot.config import AI_MODELS, COIN_LIST, get_coin_api_keys
-from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma
+from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma, compute_market_structure_summary
 
 logger = logging.getLogger(__name__)
 
@@ -141,12 +141,7 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
     vol_ma_20 = sma(volumes, 20)
     adx_v = adx(highs, lows, closes, 14)
 
-    last_32df = ohlcv.tail(32)
-    last_32_candles = [
-        [round(float(r["open"]), 5), round(float(r["high"]), 5),
-         round(float(r["low"]), 5), round(float(r["close"]), 5)]
-        for _, r in last_32df.iterrows()
-    ]
+    structure = compute_market_structure_summary(ohlcv)
 
     last = lambda s: float(s.iloc[-1]) if s is not None and not s.empty else 0.0
     prev = lambda s: float(s.iloc[-2]) if s is not None and len(s) > 1 else 0.0
@@ -173,7 +168,13 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
         "adx": last(adx_v),
         "ema_9_prev": prev(ema_9),
         "ema_21_prev": prev(ema_21),
-        "last_32_candles_array": last_32_candles,
+        "price_action_summary": structure.get("price_action_summary", ""),
+        "structure_state": structure.get("structure_state", "Unknown"),
+        "exhaustion_state": structure.get("exhaustion_state", "Unknown"),
+        "velocity_state": structure.get("velocity_state", "Unknown"),
+        "extension_state": structure.get("extension_state", "Unknown"),
+        "range_pos_pct": structure.get("range_pos_pct", 50.0),
+        "dist_ema21_pct": structure.get("dist_ema21_pct", 0.0),
     }
 
 
@@ -205,9 +206,11 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
     oi = (market_context or {}).get("open_interest", 0)
     ratio_str = f"{bid_vol / ask_vol:.2f}x" if ask_vol > 0 else "N/A"
 
-    candles_str = str(i.get("last_32_candles_array", []))
+    summary = i.get("price_action_summary", "")
 
     return f"""You are a high-frequency {coin} perpetual futures scalping hunter. Your objective is to hunt for micro-level order-flow imbalances that can achieve our strict Target Profit. Capital preservation is paramount; never force an entry. If an edge is unclear, hold.
+
+A Python translation layer has already converted the raw 15m candles into categorical market-structure facts below (Range Position, Structure State, Velocity, Candle Anatomy/exhaustion, Extension Risk). TRUST these precomputed facts — do not try to re-derive price levels or candle geometry from raw numbers. Base your signal on the stated states.
 
 === LIVE DATA ===
 Current Price: ${close_price:.5f}
@@ -224,21 +227,20 @@ Open Interest: ${oi:,.0f}
 Target Profit: ${tp_usd} ({tp_pct:.2f}% of notional)
 Stop Loss: ${sl_usd} ({sl_pct:.2f}% of notional)
 
-=== PRICE ACTION (Last 32 15m Candles) ===
-Format: [Open, High, Low, Close] (High = Resistance, Low = Support)
-{candles_str}
+=== PRICE ACTION & MARKET STRUCTURE ===
+{summary}
 
 === EXECUTION RULES ===
-* LONG: Last 3 candles MUST show consecutive higher supports (Lows) and higher resistances (Highs). RSI confirms momentum. ATR supports {tp_pct:.2f}%. Volume Ratio > 1.0x. Spread is tight. Macro Trend is NOT strongly bearish.
-* SHORT: Last 3 candles MUST show consecutive lower supports (Lows) and lower resistances (Highs). RSI confirms momentum. ATR supports {tp_pct:.2f}%. Volume Ratio > 1.0x. Spread is tight. Macro Trend is NOT strongly bullish.
-* WAIT: 3-candle structure is broken/ranging, ATR is too low, volume is dead, spread is too wide, or setup fights the macro trend.
+* LONG: The market structure supports momentum (not at local resistance, no buying exhaustion / bearish rejection, not overextended vs EMA21). Velocity is not decelerating. RSI confirms momentum. ATR supports {tp_pct:.2f}%. Volume Ratio > 1.0x. Spread is tight. Macro Trend is NOT strongly bearish.
+* SHORT: The market structure supports momentum (not at local support, no selling exhaustion / bullish rejection, not oversold-extension vs EMA21). Velocity is not decelerating. RSI confirms momentum. ATR supports {tp_pct:.2f}%. Volume Ratio > 1.0x. Spread is tight. Macro Trend is NOT strongly bullish.
+* WAIT: Structure is mid-range consolidation or indecision, exhaustion/rejection is present at a key level, price is overextended, velocity is decelerating or stagnant, ATR is too low, volume is dead, spread is too wide, or the setup fights the macro trend.
 
-Respond ONLY with valid JSON. Use the "analysis" block to map the structure, volatility, and context before deciding.
+Respond ONLY with valid JSON. Use the "analysis" block to map the structure, volatility, and context before deciding, relying on the precomputed states.
 
 {{
   "analysis": {{
-    "three_candle_structure": "Analyze Highs and Lows of the last 3 candles. Higher highs/lows or lower highs/lows?",
-    "rsi_momentum": "Does current RSI support the 3-candle structure?",
+    "market_structure": "Use the precomputed Structure State and Candle Anatomy. Is the market at resistance, support, or mid-range? Is there rejection or exhaustion?",
+    "rsi_momentum": "Does current RSI support the market structure?",
     "volatility_and_spread": "Compare {tp_pct:.2f}% to ATR. Is spread low enough and volatility high enough?",
     "volume_and_macro": "Is the Volume Ratio > 1.0x? Does the Macro Trend block this trade?",
     "order_book_edge": "Who controls the book?"
@@ -592,9 +594,8 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
     regime = _detect_regime(ohlcv)
     indicators = compute_indicators(ohlcv)
 
-    last_32 = indicators.get("last_32_candles_array", [])
-    if not last_32 or len(last_32) < 32:
-        logger.error(f"{coin}: GUARDRAIL — last_32_candles_array has {len(last_32)} entries, skipping AI call")
+    if len(ohlcv) < 32 or not indicators.get("price_action_summary"):
+        logger.error(f"{coin}: GUARDRAIL — insufficient candles for market structure (len={len(ohlcv)}), skipping AI call")
         return {
             "direction": "wait",
             "confidence": 0.0,
@@ -603,7 +604,7 @@ def generate_signal(ohlcv: pd.DataFrame, coin: str = "DOGE", enabled_models: lis
             "model_details": [],
             "vote_tally": {"long": 0, "short": 0, "wait": 0},
             "cycle_id": uuid.uuid4().hex[:12],
-            "_debug_calls": {"guardrail": f"last_32_candles_array missing ({len(last_32)} candles)"},
+            "_debug_calls": {"guardrail": f"price_action_summary missing ({len(ohlcv)} candles)"},
         }
 
     if market_context and ohlcv is not None and not ohlcv.empty:
