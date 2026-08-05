@@ -183,8 +183,8 @@ def rsi(series: pd.Series, length: int = 14) -> pd.Series:
     delta = series.diff()
     gain = delta.where(delta > 0, 0.0)
     loss = (-delta.where(delta < 0, 0.0))
-    avg_gain = gain.rolling(window=length).mean()
-    avg_loss = loss.rolling(window=length).mean()
+    avg_gain = gain.ewm(alpha=1.0 / length, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1.0 / length, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
 
@@ -198,12 +198,71 @@ def macd(series: pd.Series) -> dict:
     return {"macd": macd_line, "signal": signal_line, "histogram": histogram}
 
 
+def get_indicator_states(df: pd.DataFrame) -> dict:
+    """Return categorical mean-reversion states (BB + MACD) as plain-English strings.
+
+    Never exposes raw indicator floats. Defaults to safe strings when data is
+    insufficient or values are NaN.
+    """
+    if df is None or df.empty:
+        return {"bb_state": "Neutral", "macd_state": "Neutral"}
+
+    closes = df["close"]
+
+    def _last_valid(s: pd.Series, default: float = 0.0) -> float:
+        try:
+            v = float(s.iloc[-1])
+            return v if math.isfinite(v) else default
+        except (TypeError, ValueError):
+            return default
+
+    bb = bollinger_bands(closes, 20)
+    close_cur = _last_valid(closes)
+    bb_upper = _last_valid(bb["upper"])
+    bb_lower = _last_valid(bb["lower"])
+
+    if bb_upper == 0.0 and bb_lower == 0.0:
+        bb_state = "Neutral"
+    elif bb_upper > 0 and close_cur >= bb_upper:
+        bb_state = "Overextended (At/Above Upper Band)"
+    elif bb_lower > 0 and close_cur <= bb_lower:
+        bb_state = "Oversold (At/Below Lower Band)"
+    else:
+        bb_state = "Within normal volatility bands"
+
+    hist = macd(closes)["histogram"]
+    hist_cur = _last_valid(hist)
+    if len(closes) < 2:
+        macd_state = "Neutral"
+    else:
+        prev_hist_raw = hist.iloc[-2]
+        try:
+            prev_hist = float(prev_hist_raw)
+            prev_hist = prev_hist if math.isfinite(prev_hist) else None
+        except (TypeError, ValueError):
+            prev_hist = None
+        if prev_hist is None or not math.isfinite(hist_cur):
+            macd_state = "Neutral"
+        elif hist_cur > 0 and hist_cur > prev_hist:
+            macd_state = "Bullish and accelerating"
+        elif hist_cur > 0 and hist_cur < prev_hist:
+            macd_state = "Bullish but decelerating (divergence warning)"
+        elif hist_cur < 0 and hist_cur < prev_hist:
+            macd_state = "Bearish and accelerating"
+        elif hist_cur < 0 and hist_cur > prev_hist:
+            macd_state = "Bearish but decelerating (divergence warning)"
+        else:
+            macd_state = "Neutral"
+
+    return {"bb_state": bb_state, "macd_state": macd_state}
+
+
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
     tr1 = high - low
     tr2 = (high - close.shift()).abs()
     tr3 = (low - close.shift()).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    return tr.rolling(window=length).mean()
+    return tr.ewm(alpha=1.0 / length, adjust=False).mean()
 
 
 def bollinger_bands(series: pd.Series, length: int = 20, std: float = 2.0) -> dict:

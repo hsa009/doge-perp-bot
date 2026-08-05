@@ -1106,6 +1106,14 @@ def _fetch_ohlcv(coin: str) -> pd.DataFrame | None:
         return None
 
 
+def _classify_macro_trend(ema9: float, ema21: float, ema50: float, close: float) -> str:
+    if ema9 > ema21 > ema50:
+        return "Strongly Bullish" if close >= ema9 else "Bullish but pulling back (short-term weakness)"
+    if ema9 < ema21 < ema50:
+        return "Strongly Bearish" if close <= ema9 else "Bearish but bouncing (short-term strength)"
+    return "Mixed"
+
+
 def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
     macro_trend = "mixed"
     close_price = 0.0
@@ -1123,10 +1131,11 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
             rows_4h = [float(c["c"]) for c in candles_4h]
             closes_4h = pd.Series(rows_4h)
             if len(closes_4h) >= 50:
-                ema9 = ema_func(closes_4h, 9).iloc[-1]
-                ema21 = ema_func(closes_4h, 21).iloc[-1]
-                ema50 = ema_func(closes_4h, 50).iloc[-1]
-                macro_trend = "bullish" if ema9 > ema21 > ema50 else "bearish" if ema9 < ema21 < ema50 else "mixed"
+                ema9 = float(ema_func(closes_4h, 9).iloc[-1])
+                ema21 = float(ema_func(closes_4h, 21).iloc[-1])
+                ema50 = float(ema_func(closes_4h, 50).iloc[-1])
+                last_4h_close = float(closes_4h.iloc[-1])
+                macro_trend = _classify_macro_trend(ema9, ema21, ema50, last_4h_close)
             close_price = float(candles_4h[-1]["c"])
     except Exception as e:
         logger.warning(f"Failed to fetch 4h candles for {coin}: {e}")

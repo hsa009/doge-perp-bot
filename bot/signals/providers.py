@@ -11,7 +11,7 @@ import httpx
 import pandas as pd
 
 from bot.config import AI_MODELS, COIN_LIST, get_coin_api_keys
-from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma, compute_market_structure_summary
+from bot.signals.rules import ema, rsi, macd, atr, bollinger_bands, adx, sma, compute_market_structure_summary, get_indicator_states
 
 logger = logging.getLogger(__name__)
 
@@ -142,9 +142,14 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
     adx_v = adx(highs, lows, closes, 14)
 
     structure = compute_market_structure_summary(ohlcv)
+    states = get_indicator_states(ohlcv)
 
     last = lambda s: float(s.iloc[-1]) if s is not None and not s.empty else 0.0
     prev = lambda s: float(s.iloc[-2]) if s is not None and len(s) > 1 else 0.0
+
+    _close_last = last(closes)
+    _atr_last = last(atr_v)
+    atr_pct = (_atr_last / _close_last * 100.0) if _close_last > 0 else 0.0
 
     return {
         "close": last(closes),
@@ -161,9 +166,12 @@ def compute_indicators(ohlcv: pd.DataFrame) -> dict:
         "macd_signal": last(macd_v["signal"]),
         "macd_histogram": last(macd_v["histogram"]),
         "atr": last(atr_v),
+        "atr_pct": atr_pct,
         "bb_upper": last(bb["upper"]),
         "bb_mid": last(bb["mid"]),
         "bb_lower": last(bb["lower"]),
+        "bb_state": states.get("bb_state", "Within normal volatility bands"),
+        "macd_state": states.get("macd_state", "Neutral"),
         "vol_ma_20": last(vol_ma_20),
         "adx": last(adx_v),
         "ema_9_prev": prev(ema_9),
@@ -195,8 +203,10 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
     tp_pct = (tp_usd / notional) * 100
     sl_pct = (sl_usd / notional) * 100
     close_price = i["close"]
-    atr_val = i["atr"]
+    atr_pct = i.get("atr_pct", 0.0)
     rsi_val = i.get("rsi_15m", i.get("rsi", 50))
+    bb_state = i.get("bb_state", "Within normal volatility bands")
+    macd_state = i.get("macd_state", "Neutral")
 
     ob = (market_context or {}).get("order_book", {})
     bid_vol = ob.get("bid_volume", 0)
@@ -215,7 +225,9 @@ A Python translation layer has already converted the raw 15m candles into catego
 === LIVE DATA ===
 Current Price: ${close_price:.5f}
 RSI (15m): {rsi_val:.1f}
-ATR(14): ${atr_val:.5f}
+Volatility (ATR): {atr_pct:.2f}% of asset price per 15m candle
+Bollinger Bands: {bb_state}
+MACD Momentum: {macd_state}
 Volume Ratio (vs 20-avg): {vol_ratio:.2f}x
 Spread: {spread_pct:.4f}%
 Macro Trend (4H/1D): {macro_trend}
