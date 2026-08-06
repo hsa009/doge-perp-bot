@@ -1090,8 +1090,13 @@ def _fetch_ohlcv(coin: str) -> pd.DataFrame | None:
         candles = resp.json()
         if not candles:
             return None
+        now_ms = int(time.time() * 1000)
+        interval_ms = 15 * 60 * 1000
+        finalized = [c for c in candles if c["t"] + interval_ms <= now_ms]
+        if not finalized:
+            finalized = candles
         rows = []
-        for c in candles:
+        for c in finalized:
             rows.append({
                 "timestamp": c["t"],
                 "open": float(c["o"]),
@@ -1128,7 +1133,9 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
         resp.raise_for_status()
         candles_4h = resp.json()
         if candles_4h:
-            rows_4h = [float(c["c"]) for c in candles_4h]
+            now_ms = int(time.time() * 1000)
+            finalized_4h = [c for c in candles_4h if c["t"] + 14400000 <= now_ms] or candles_4h
+            rows_4h = [float(c["c"]) for c in finalized_4h]
             closes_4h = pd.Series(rows_4h)
             if len(closes_4h) >= 50:
                 ema9 = float(ema_func(closes_4h, 9).iloc[-1])
@@ -1136,7 +1143,7 @@ def _compute_macro_trend(coin: str, leverage: int) -> tuple[str, float, float]:
                 ema50 = float(ema_func(closes_4h, 50).iloc[-1])
                 last_4h_close = float(closes_4h.iloc[-1])
                 macro_trend = _classify_macro_trend(ema9, ema21, ema50, last_4h_close)
-            close_price = float(candles_4h[-1]["c"])
+            close_price = float(finalized_4h[-1]["c"])
     except Exception as e:
         logger.warning(f"Failed to fetch 4h candles for {coin}: {e}")
     liq_dist_pct = round(100.0 / leverage, 1) if leverage else 1.0

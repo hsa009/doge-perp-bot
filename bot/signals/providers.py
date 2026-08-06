@@ -203,6 +203,7 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
     tp_pct = (tp_usd / notional) * 100
     sl_pct = (sl_usd / notional) * 100
     close_price = i["close"]
+    current_price = float((market_context or {}).get("current_price") or close_price)
     atr_pct = i.get("atr_pct", 0.0)
     rsi_val = i.get("rsi_15m", i.get("rsi", 50))
     bb_state = i.get("bb_state", "Within normal volatility bands")
@@ -223,7 +224,7 @@ def build_prompt(indicators: dict, regime: str = "UNKNOWN", coin: str = "DOGE",
 A Python translation layer has already converted the raw 15m candles into categorical market-structure facts below (Range Position, Structure State, Velocity, Candle Anatomy/exhaustion, Extension Risk). TRUST these precomputed facts — do not try to re-derive price levels or candle geometry from raw numbers. Base your signal on the stated states.
 
 === LIVE DATA ===
-Current Price: ${close_price:.5f}
+Current Price: ${current_price:.5f}
 RSI (15m): {rsi_val:.1f}
 Volatility (ATR): {atr_pct:.2f}% of asset price per 15m candle
 Bollinger Bands: {bb_state}
