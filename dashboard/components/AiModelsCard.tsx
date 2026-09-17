@@ -26,7 +26,6 @@ export default function AiModelsCard() {
         setModels(data.models ?? [])
       }
     } catch {
-      // ignore
     }
   }, [])
 
